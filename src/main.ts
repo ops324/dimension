@@ -53,3 +53,8 @@ engine.onFrame((dt, t) => {
 
 exhibit.enter();
 engine.start();
+
+// 開発時のみ: コンソールから形状を切り替えて視覚検証するためのフック
+if (import.meta.env.DEV) {
+  (window as unknown as Record<string, unknown>).__DIMENSION__ = { engine, exhibit };
+}
