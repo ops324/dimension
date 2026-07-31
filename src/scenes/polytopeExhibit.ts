@@ -1,0 +1,631 @@
+import * as THREE from 'three';
+import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
+
+import { clamp, expSmooth } from '../math/ease';
+import { makePolytope, type Polytope, type PolytopeFamily } from '../math/polytopes';
+import { rotateBatch, type PlaneRotation } from '../math/rotation';
+import { projectOrtho, projectPerspective } from '../math/projection';
+
+import { LineBatch } from '../render/lineBatch';
+import { PointBatch } from '../render/pointBatch';
+import { CYAN, cosinePalette } from '../render/palette';
+
+import type { EngineCtx, Exhibit } from './exhibit';
+
+export type ProjectionMode = 'perspective' | 'ortho';
+
+export interface PolytopeParams {
+  family: PolytopeFamily;
+  /** 3..10 */
+  n: number;
+  projection: ProjectionMode;
+  /**
+   * 透視カスケードの**基準**視点距離(プラン既定 2.4)。実効値はこれを下限として
+   * 形状ごとに自動的に伸びる ─ MAX_PROJECTED_RADIUS のコメント参照。
+   */
+  dist: number;
+}
+
+const N_MIN = 3;
+const N_MAX = 10;
+
+/** 線幅(CSS px)。gl.lineWidth は使えないので Line2 のファットライン */
+const LINE_WIDTH = 2.5;
+/** 加算合成 + ACES で白飛びさせないための基礎輝度(既知の罠 #6) */
+const LINE_BASE_BRIGHTNESS = 0.8;
+const POINT_BRIGHTNESS = 0.85;
+
+/**
+ * 密度補正(既知の罠 #6 の本丸)。
+ *
+ * 10-cube は辺が 5120 本あり、投影すると中心付近で猛烈に重なる。加算合成では
+ * 重なりがそのまま加算されるので、n によらず一定の基礎輝度にすると高 n で
+ * 画面全体が白飛びする(実測: 未補正の 10-cube はブラウザ上で完全な白面になった)。
+ *
+ * 自動フィットで見かけの大きさは形状によらず揃うため、画面上の総インク量は
+ * ほぼ辺の本数に比例する。よって重なりのピークを一定に保つ補正は **線形**
+ * (1/edgeCount)。基準本数以下ではフル輝度のままにする。細分割は辺を端点で
+ * 継ぐだけで総インク量を増やさないので、基準は segCount ではなく edgeCount。
+ *
+ * 実測での落とし所: 10-cube → 0.8·128/5120 = 0.020(入れ子キューブ構造が
+ * 白飛びせずに読める) / 4-cube → 0.8(素の明るいワイヤ)。
+ */
+const DENSITY_REFERENCE_EDGES = 128;
+const DENSITY_REFERENCE_VERTICES = 48;
+
+/**
+ * 透視カスケードの退化回避(既知の罠 #2 の実測による補強)。
+ *
+ * プランは「外接半径 1 への正規化 + dist=2.4 で特異点は構造的に排除」としているが、
+ * これが保証するのは**カスケードの第 1 段だけ**である。各段は下位の全座標を
+ * f = dist/(dist − p[d]) 倍するので倍率が累積し、段数の多い高次元では下位段の
+ * |p[d]| が dist を超えて分母の符号が反転する。
+ *
+ * 実測(dist=2.4・回転を 400 サンプル走査したときの投影半径の最大値):
+ *   6-cube 1.44 / 7-cube 1.80 / 8-cube 2.65 / **9-cube 37.5 / 10-cube 178**
+ * (9・10 では projection.ts の F_CLAMP=50 が発動している = 完全な退化)
+ *
+ * そこで基準 dist から測定 → 上限超なら dist を 1.2 倍、を繰り返して安全な
+ * 視点距離を選ぶ。simplex / orthoplex は n=10 でも 1.15 / 1.10 なので 2.4 のまま。
+ */
+const MAX_PROJECTED_RADIUS = 3;
+const DIST_STEP = 1.2;
+const DIST_MAX_STEPS = 8;
+
+/**
+ * 自動フィット。投影後の見かけ半径は形状で桁違いに変わる(10-cube の座標は
+ * ±1/√10 しかない一方、カスケードで数倍に伸びる)ため、測定した半径から
+ * ワールドスケールを決めて構図を揃える。投影の数学には一切手を入れず、
+ * カメラのフレーミングに相当する操作だけを行う。
+ * カメラ z=6 / fov 50 の可視半高が ≈2.8 なので、最大時に画面高の ~82% を占める
+ * 2.3 を目標半径とする。
+ */
+const TARGET_RADIUS = 2.3;
+/** 見かけ半径の測定条件。SPAN は ω と共鳴しないよう半端な値にする */
+const FIT_SAMPLES = 64;
+const FIT_SPAN = 53.7;
+
+/** reveal(draw-on)の収束速度。expSmooth で ~350ms */
+const REVEAL_RATE = 9;
+
+/**
+ * 自動タンブルの角速度。比を無理数にして周期が一致しないようにする
+ * (合成回転が決して同じ姿勢へ戻らない = 常に新しい断面が見える)。
+ */
+const OMEGA_0 = 0.31;
+const OMEGA_1 = 0.23 * Math.SQRT2;
+const OMEGA_2 = 0.17 * Math.sqrt(5);
+
+/** 深度 → 色のルックアップ表の解像度 */
+const LUT_SIZE = 256;
+const LUT_MAX = LUT_SIZE - 1;
+
+/**
+ * 辺の細分割数(プラン5節「投影の真の曲率」)。
+ * 透視カスケードでは高次元の直線辺が 3D では曲線に映る。頂点だけを投影して
+ * 直線で結ぶとこの曲がりが消えてしまうため、辺上に中間点を打って投影する。
+ */
+function subdivisionsFor(n: number): number {
+  return n <= 6 ? 16 : n <= 8 ? 8 : 4;
+}
+
+function vertexCountOf(family: PolytopeFamily, n: number): number {
+  switch (family) {
+    case 'cube':
+      return 1 << n;
+    case 'simplex':
+      return n + 1;
+    case 'orthoplex':
+      return 2 * n;
+  }
+}
+
+function edgeCountOf(family: PolytopeFamily, n: number): number {
+  switch (family) {
+    case 'cube':
+      return n * (1 << (n - 1));
+    case 'simplex':
+      return ((n + 1) * n) / 2;
+    case 'orthoplex':
+      return 2 * n * (n - 1);
+  }
+}
+
+/**
+ * 全 (族 × n) の組み合わせを走査してバッファ容量を決める。
+ * 最悪ケースは常に n=10 の cube: 1024 頂点 / 5120 辺 / 細分割 4 で
+ *   細分点 5120×5 = 25,600 / 線分 5120×4 = 20,480。
+ * ハードコードせず導出することで、族や n の範囲を広げても破綻しない。
+ */
+const CAPACITY = (() => {
+  const families: readonly PolytopeFamily[] = ['cube', 'simplex', 'orthoplex'];
+  let vertices = 0;
+  let segments = 0;
+  let subPoints = 0;
+  for (const family of families) {
+    for (let n = N_MIN; n <= N_MAX; n++) {
+      const s = subdivisionsFor(n);
+      const e = edgeCountOf(family, n);
+      vertices = Math.max(vertices, vertexCountOf(family, n));
+      segments = Math.max(segments, e * s);
+      subPoints = Math.max(subPoints, e * (s + 1));
+    }
+  }
+  return { vertices, segments, subPoints };
+})();
+
+function setPlane(rot: PlaneRotation, i: number, j: number): void {
+  rot.i = i;
+  rot.j = j;
+}
+
+/** 深度(正規化済み ∈[-1,1])→ LUT の行インデックス */
+function lutIndexOf(depth: number, scale: number): number {
+  const t = (depth * scale + 1) * 0.5 * LUT_MAX;
+  if (!(t > 0)) return 0;
+  return t > LUT_MAX ? LUT_MAX : t | 0;
+}
+
+/**
+ * n 次元多胞体エクスプローラ。
+ *
+ * 毎フレームのデータフロー(プラン6節・アロケーションゼロ):
+ *   角度更新(絶対時刻) → rotateBatch → projectPerspective/Ortho
+ *   → 辺インデックスで線分バッファへ scatter(色も同時に)
+ *   → commitPositions / commitColors / commit
+ */
+export class PolytopeExhibit implements Exhibit {
+  readonly id = 'polytope';
+  readonly scene: THREE.Scene;
+  readonly params: PolytopeParams;
+
+  private readonly group = new THREE.Group();
+
+  private material!: LineMaterial;
+  private lineBatch!: LineBatch;
+  private pointBatch!: PointBatch;
+
+  /** 細分点の元座標(nD インターリーブ・ストライド n) */
+  private subBase!: Float64Array;
+  /** 細分点の回転後座標 */
+  private subRot!: Float64Array;
+  /** 細分点の 3D 投影結果 */
+  private subProj!: Float32Array;
+  /** 素の頂点(グロー点用)の元座標 / 回転後座標 */
+  private vertBase!: Float64Array;
+  private vertRot!: Float64Array;
+  /** 深度 → RGB の事前計算表(毎フレーム 25,600 回 cos を呼ばないため) */
+  private depthLut!: Float32Array;
+
+  /** 自動タンブルの 3 平面。オブジェクトは使い回して angle/i/j だけ書き換える */
+  private readonly rots: PlaneRotation[] = [
+    { i: 0, j: 1, angle: 0 },
+    { i: 0, j: 2, angle: 0 },
+    { i: 1, j: 2, angle: 0 },
+  ];
+  /** computeDepthScale の作業用ビット列 */
+  private readonly axisFlags = new Uint8Array(N_MAX);
+  private readonly scratchColor = new THREE.Color();
+
+  private polytope: Polytope | null = null;
+  private subdivisions = 0;
+  private subPointCount = 0;
+  private segCount = 0;
+  /** 最終軸座標を [-1,1] へ正規化する係数(色のダイナミックレンジを使い切るため) */
+  private depthScale = 1;
+  /** 密度補正後の線/点の基礎輝度 */
+  private lineBrightness = LINE_BASE_BRIGHTNESS;
+  private pointBrightness = POINT_BRIGHTNESS;
+  /** 実効視点距離(params.dist を下限とし、退化する形状では自動的に伸ばす) */
+  private dist = 2.4;
+
+  private reveal = 0;
+  private revealTarget = 1;
+  private initialized = false;
+
+  constructor(params?: Partial<PolytopeParams>) {
+    this.scene = new THREE.Scene();
+    this.scene.name = 'polytopeScene';
+
+    // Phase 2 の既定は性能ストレスケースの 10-cube。
+    // 出荷時の既定(おそらく n=4 のテッセラクト)は Phase 7 で決める。
+    this.params = {
+      family: params?.family ?? 'cube',
+      n: params?.n ?? 10,
+      projection: params?.projection ?? 'perspective',
+      dist: params?.dist ?? 2.4,
+    };
+
+    this.group.name = 'polytope';
+    this.scene.add(this.group);
+  }
+
+  init(ctx: EngineCtx): void {
+    if (this.initialized) return;
+
+    this.subBase = new Float64Array(CAPACITY.subPoints * N_MAX);
+    this.subRot = new Float64Array(CAPACITY.subPoints * N_MAX);
+    this.subProj = new Float32Array(CAPACITY.subPoints * 3);
+    this.vertBase = new Float64Array(CAPACITY.vertices * N_MAX);
+    this.vertRot = new Float64Array(CAPACITY.vertices * N_MAX);
+    this.depthLut = new Float32Array(LUT_SIZE * 3);
+
+    this.material = new LineMaterial({
+      vertexColors: true,
+      transparent: true,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+      linewidth: LINE_WIDTH,
+    });
+    // resize 時の resolution 更新は engine が一元管理する(既知の罠 #3)
+    ctx.engine.registerLineMaterial(this.material);
+
+    this.lineBatch = new LineBatch(CAPACITY.segments, this.material);
+    this.pointBatch = new PointBatch(CAPACITY.vertices, {
+      color: CYAN,
+      brightness: POINT_BRIGHTNESS,
+    });
+    ctx.engine.onResize((_width, _height, pixelRatio) => {
+      this.pointBatch.setPixelRatio(pixelRatio);
+    });
+
+    this.group.add(this.lineBatch.object, this.pointBatch.object);
+
+    this.initialized = true;
+    this.applyShape();
+  }
+
+  enter(): void {
+    this.reveal = 0;
+    this.revealTarget = 1;
+  }
+
+  exit(): void {
+    this.revealTarget = 0;
+  }
+
+  /** 制御パネルは Phase 7(gallery)で実装する */
+  buildPanel(_root: HTMLElement): void {
+    // stub
+  }
+
+  /** 形状の切り替え。事前確保済みバッファを再利用し、前計算だけをやり直す */
+  setShape(family: PolytopeFamily, n: number): void {
+    this.params.family = family;
+    this.params.n = n;
+    if (this.initialized) this.applyShape();
+  }
+
+  setProjection(mode: ProjectionMode): void {
+    this.params.projection = mode;
+    if (this.polytope !== null) this.applyProjection(this.polytope);
+  }
+
+  update(dt: number, t: number): void {
+    const poly = this.polytope;
+    if (!this.initialized || poly === null) return;
+
+    // draw-on: instanceCount を伸ばすだけのアロケーションフリーな入退場
+    if (this.reveal !== this.revealTarget) {
+      this.reveal = expSmooth(this.reveal, this.revealTarget, REVEAL_RATE, dt);
+      if (Math.abs(this.revealTarget - this.reveal) < 0.002) this.reveal = this.revealTarget;
+    }
+
+    const n = poly.n;
+    const rots = this.rots;
+    // 角度は毎フレーム絶対時刻から再計算する(増分積算しないので誤差が溜まらない)
+    rots[0].angle = OMEGA_0 * t;
+    rots[1].angle = OMEGA_1 * t;
+    rots[2].angle = OMEGA_2 * t;
+
+    const perspective = this.params.projection === 'perspective';
+    const dist = this.dist;
+
+    // 1) 細分点: nD 回転 → 3D 投影
+    rotateBatch(this.subBase, this.subRot, n, this.subPointCount, rots);
+    if (perspective) {
+      projectPerspective(this.subRot, n, this.subPointCount, dist, this.subProj);
+    } else {
+      projectOrtho(this.subRot, n, this.subPointCount, this.subProj);
+    }
+    // 2) 点列(チェーン)→ 線分ペアへ展開。subProj をそのまま線バッファに
+    //    できないのはこの展開があるため(1 点は 2 線分に共有される)
+    this.scatterSegments(n);
+
+    // 3) 素の頂点は別途回転・投影して Points のバッファへ直接書く
+    //    (投影関数の out がそのまま BufferAttribute の配列)
+    const vertexCount = poly.vertexCount;
+    rotateBatch(this.vertBase, this.vertRot, n, vertexCount, rots);
+    if (perspective) {
+      projectPerspective(this.vertRot, n, vertexCount, dist, this.pointBatch.positions);
+    } else {
+      projectOrtho(this.vertRot, n, vertexCount, this.pointBatch.positions);
+    }
+    this.shadeVertices(n, vertexCount);
+
+    this.lineBatch.commitPositions(this.segCount);
+    this.lineBatch.commitColors(this.segCount);
+    this.lineBatch.setReveal(this.reveal);
+    this.pointBatch.commit(vertexCount);
+    this.pointBatch.commitBrightness();
+    this.pointBatch.setBrightness(this.pointBrightness * this.reveal);
+  }
+
+  dispose(): void {
+    this.lineBatch?.dispose();
+    this.pointBatch?.dispose();
+    this.material?.dispose();
+  }
+
+  // --- 内部 ------------------------------------------------------------------
+
+  /**
+   * 細分点チェーンを線分ペアへ展開しつつ、色も同時に書き込む。
+   *
+   * 色は「回転後の最終軸座標」= 3D へ潰される直前の隠れた次元での深さ。
+   * 手前(+)ほど明るくマゼンタ寄り、奥(−)ほど暗く青寄りになり、4 次元以上の
+   * 奥行きが色として読める(科学的にも正しい深度キュー)。
+   */
+  private scatterSegments(n: number): void {
+    const poly = this.polytope;
+    if (poly === null) return;
+
+    const S = this.subdivisions;
+    const edgeCount = poly.edgeCount;
+    const proj = this.subProj;
+    const rot = this.subRot;
+    const lut = this.depthLut;
+    const pos = this.lineBatch.positions;
+    const col = this.lineBatch.colors;
+    const depthAxis = n - 1;
+    const scale = this.depthScale;
+
+    let p = 0; // 細分点インデックス(辺ごとに S+1 点が連続配置されている)
+    let seg = 0;
+
+    for (let e = 0; e < edgeCount; e++) {
+      let i0 = lutIndexOf(rot[p * n + depthAxis], scale);
+      for (let s = 0; s < S; s++) {
+        const p1 = p + 1;
+        const i1 = lutIndexOf(rot[p1 * n + depthAxis], scale);
+
+        const so = seg * 6;
+        const a = p * 3;
+        const b = p1 * 3;
+        pos[so] = proj[a];
+        pos[so + 1] = proj[a + 1];
+        pos[so + 2] = proj[a + 2];
+        pos[so + 3] = proj[b];
+        pos[so + 4] = proj[b + 1];
+        pos[so + 5] = proj[b + 2];
+
+        const c0 = i0 * 3;
+        const c1 = i1 * 3;
+        col[so] = lut[c0];
+        col[so + 1] = lut[c0 + 1];
+        col[so + 2] = lut[c0 + 2];
+        col[so + 3] = lut[c1];
+        col[so + 4] = lut[c1 + 1];
+        col[so + 5] = lut[c1 + 2];
+
+        i0 = i1;
+        p = p1;
+        seg++;
+      }
+      p++; // 辺の終端点を消費して次の辺の先頭へ
+    }
+  }
+
+  /** 頂点グローの輝度にも同じ深度キューを載せる */
+  private shadeVertices(n: number, count: number): void {
+    const rot = this.vertRot;
+    const bright = this.pointBatch.brights;
+    const depthAxis = n - 1;
+    const scale = this.depthScale;
+    for (let v = 0; v < count; v++) {
+      const raw = (rot[v * n + depthAxis] * scale + 1) * 0.5;
+      const t01 = raw < 0 ? 0 : raw > 1 ? 1 : raw;
+      bright[v] = 0.35 + 0.85 * t01;
+    }
+  }
+
+  /** 形状依存の前計算をまとめて実行する(init と setShape からのみ) */
+  private applyShape(): void {
+    const n = clamp(Math.round(this.params.n), N_MIN, N_MAX);
+    this.params.n = n;
+
+    const poly = makePolytope(this.params.family, n);
+    this.polytope = poly;
+    this.subdivisions = subdivisionsFor(n);
+
+    this.pickPlanes(n);
+    this.buildSubdivided(poly);
+    this.vertBase.set(poly.vertices);
+    this.depthScale = this.computeDepthScale(poly);
+
+    this.lineBrightness =
+      LINE_BASE_BRIGHTNESS * Math.min(1, DENSITY_REFERENCE_EDGES / poly.edgeCount);
+    this.pointBrightness =
+      POINT_BRIGHTNESS * Math.min(1, DENSITY_REFERENCE_VERTICES / poly.vertexCount);
+    this.buildDepthLut();
+
+    this.applyProjection(poly);
+
+    console.info(
+      `[polytope] family=${this.params.family} n=${n} verts=${poly.vertexCount} ` +
+        `edges=${poly.edgeCount} subSegs=${this.segCount} ` +
+        `dist=${this.dist.toFixed(2)} fit=${this.group.scale.x.toFixed(3)}`,
+    );
+  }
+
+  /**
+   * 実効視点距離とワールドスケールを決める。形状変更と投影モード変更でのみ実行。
+   * 測定には毎フレームと同じ回転・投影経路を使う(数式を二重実装しない)。
+   */
+  private applyProjection(poly: Polytope): void {
+    const perspective = this.params.projection === 'perspective';
+    let dist = this.params.dist;
+    let radius = this.measureRadius(poly, dist, perspective);
+
+    if (perspective) {
+      for (let i = 0; i < DIST_MAX_STEPS && radius > MAX_PROJECTED_RADIUS; i++) {
+        dist *= DIST_STEP;
+        radius = this.measureRadius(poly, dist, perspective);
+      }
+    }
+
+    this.dist = dist;
+    this.group.scale.setScalar(radius > 1e-6 ? TARGET_RADIUS / radius : TARGET_RADIUS);
+  }
+
+  /** 自動タンブルを時間方向に走査したときの投影半径の最大値 */
+  private measureRadius(poly: Polytope, dist: number, perspective: boolean): number {
+    const n = poly.n;
+    const count = poly.vertexCount;
+    const rots = this.rots;
+    const out = this.subProj; // 形状変更時のみ走るので細分点用バッファを流用できる
+
+    let maxSq = 0;
+    for (let s = 0; s < FIT_SAMPLES; s++) {
+      const t = (s / FIT_SAMPLES) * FIT_SPAN;
+      rots[0].angle = OMEGA_0 * t;
+      rots[1].angle = OMEGA_1 * t;
+      rots[2].angle = OMEGA_2 * t;
+      rotateBatch(this.vertBase, this.vertRot, n, count, rots);
+      if (perspective) {
+        projectPerspective(this.vertRot, n, count, dist, out);
+      } else {
+        projectOrtho(this.vertRot, n, count, out);
+      }
+      for (let v = 0; v < count; v++) {
+        const x = out[v * 3];
+        const y = out[v * 3 + 1];
+        const z = out[v * 3 + 2];
+        const r2 = x * x + y * y + z * z;
+        if (r2 > maxSq) maxSq = r2;
+      }
+    }
+    return Math.sqrt(maxSq);
+  }
+
+  /** 辺ごとに S+1 点を線形補間して連続配置する(nD のまま補間するのが要点) */
+  private buildSubdivided(poly: Polytope): void {
+    const n = poly.n;
+    const S = this.subdivisions;
+    const invS = 1 / S;
+    const edges = poly.edges;
+    const vertices = poly.vertices;
+    const base = this.subBase;
+
+    let p = 0;
+    for (let e = 0; e < poly.edgeCount; e++) {
+      const a = edges[e * 2] * n;
+      const b = edges[e * 2 + 1] * n;
+      for (let s = 0; s <= S; s++) {
+        const t = s * invS;
+        const o = p * n;
+        for (let k = 0; k < n; k++) {
+          const va = vertices[a + k];
+          base[o + k] = va + (vertices[b + k] - va) * t;
+        }
+        p++;
+      }
+    }
+
+    this.subPointCount = p;
+    this.segCount = poly.edgeCount * S;
+  }
+
+  /**
+   * 回転平面の選択。3 枚で次の 3 条件を同時に満たす必要がある:
+   *
+   * 1. 少なくとも 1 平面が軸 3 以上を含む ─ さもないと「ただの 3D の回転」に
+   *    なり高次元性が見えない。
+   * 2. **最終軸(深度軸)n−1 が必ず回る** ─ 回らないと深度が定数になり、
+   *    配色の深度キューが凍りつく。
+   * 3. **可視 3 軸だけで閉じた平面を 1 枚含む** ─ 高次元平面だけで組むと
+   *    3D 空間内での姿勢が変わらず、形状が正面固定のまま脈動するだけに見える
+   *    (実測: (0,3)/(1,n−1)/(2,n−2) の組では 10-cube が常に正面向きの
+   *    「トンネル」に見えてしまった)。
+   *
+   * → (0,2) で 3D の傾き、(1,n−1) で深度軸、(2,n−2) で中位軸を混ぜる。
+   */
+  private pickPlanes(n: number): void {
+    const r = this.rots;
+    if (n <= 3) {
+      setPlane(r[0], 0, 1);
+      setPlane(r[1], 0, 2);
+      setPlane(r[2], 1, 2);
+      return;
+    }
+    setPlane(r[0], 0, 2);
+    setPlane(r[1], 1, n - 1);
+    if (n - 2 > 2) {
+      setPlane(r[2], 2, n - 2);
+    } else {
+      // n=4 は (2,2) が退化する。(0,3) にすると 4 軸すべてが回る
+      setPlane(r[2], 0, 3);
+    }
+  }
+
+  /**
+   * 「回転後の最終軸座標」が取り得る最大値の逆数を返す。
+   *
+   * 深度の生の値域は形状と回転平面に強く依存する(例: 10-cube の座標は ±1/√10 しか
+   * ないので、そのまま [-1,1] とみなすとパレットの中央 3 割しか使われない)。
+   * 最終軸へ寄与し得る入力軸を回転列から逆向きに辿って集め、その部分ノルムの
+   * 最大値でスケールすることで、どの形状でも配色のレンジを使い切る。
+   */
+  private computeDepthScale(poly: Polytope): number {
+    const n = poly.n;
+    const flags = this.axisFlags;
+    flags.fill(0);
+    flags[n - 1] = 1;
+    // rots は順に適用されるので、依存関係は後ろから辿る
+    for (let r = this.rots.length - 1; r >= 0; r--) {
+      const rot = this.rots[r];
+      if (flags[rot.i] === 1 || flags[rot.j] === 1) {
+        flags[rot.i] = 1;
+        flags[rot.j] = 1;
+      }
+    }
+
+    const vertices = poly.vertices;
+    let maxSq = 0;
+    for (let v = 0; v < poly.vertexCount; v++) {
+      const o = v * n;
+      let sum = 0;
+      for (let k = 0; k < n; k++) {
+        if (flags[k] === 1) {
+          const x = vertices[o + k];
+          sum += x * x;
+        }
+      }
+      if (sum > maxSq) maxSq = sum;
+    }
+
+    const max = Math.sqrt(maxSq);
+    return max > 1e-6 ? 1 / max : 1;
+  }
+
+  /**
+   * 深度 → 色の表を作る。パレット評価は 256 段で足り、毎フレーム数万回
+   * Math.cos を呼ぶ必要がなくなる。
+   *
+   * t = 0.15 + 0.70·t01(パレットの実用域)、輝度 = (0.55 + 0.35·t01)·基礎輝度。
+   * 隠れた次元で手前にあるものほど明るい = 4 次元以上でも成立する深度キュー。
+   */
+  private buildDepthLut(): void {
+    const color = this.scratchColor;
+    const lut = this.depthLut;
+    for (let i = 0; i < LUT_SIZE; i++) {
+      const t01 = i / LUT_MAX;
+      cosinePalette(0.15 + 0.7 * t01, color);
+      const brightness = (0.55 + 0.35 * t01) * this.lineBrightness;
+      const o = i * 3;
+      lut[o] = color.r * brightness;
+      lut[o + 1] = color.g * brightness;
+      lut[o + 2] = color.b * brightness;
+    }
+  }
+}
