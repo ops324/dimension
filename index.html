@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#05060f" />
+    <meta
+      name="description"
+      content="人間が直接見ることのできない高次元の構造を、スクロールする物語と対話型ギャラリーで体験する可視化作品。"
+    />
+    <title>DIMENSION｜高次元を見る</title>
+  </head>
+  <body>
+    <!-- 全画面の固定キャンバス。配置は style.css の #gl が担う -->
+    <canvas id="gl"></canvas>
+
+    <!-- HUD プレースホルダ: 次元カウンタ・品質表示などは Phase 3 / Phase 8 で実装 -->
+    <div id="hud" aria-hidden="true"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
