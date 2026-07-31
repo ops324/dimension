@@ -1,0 +1,66 @@
+/* DIMENSION — base stylesheet
+   フォントは main.ts が @fontsource から import する(CDN依存なし)。
+   ここではパレットとタイポグラフィの土台のみを定義する。 */
+
+:root {
+  /* パレット(プラン5節) */
+  --bg: #05060f;
+  --cyan: #4fd8ff;
+  --magenta: #ff4fd8;
+  --violet: #9d6bff;
+  --gold: #ffd24f;
+
+  /* 派生インク色 */
+  --ink: #e8ecfb;
+  --ink-dim: #97a0c4;
+  --line: rgba(232, 236, 251, 0.14);
+  --glass: rgba(10, 12, 24, 0.55);
+
+  /* タイポグラフィ(EN見出し / 日本語本文 / HUD数値) */
+  --font-display: 'Unbounded', 'Zen Kaku Gothic New', system-ui, sans-serif;
+  --font-body: 'Zen Kaku Gothic New', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN',
+    'Noto Sans JP', sans-serif;
+  --font-mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-weight: 400;
+  line-height: 2;
+  letter-spacing: 0.02em;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 全画面固定キャンバス。描画バッファのサイズは engine.ts が別途管理する */
+#gl {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  z-index: 0;
+}
+
+/* HUD レイヤ(中身は Phase 3 以降) */
+#hud {
+  position: fixed;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  font-family: var(--font-mono);
+}
