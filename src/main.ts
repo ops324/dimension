@@ -10,9 +10,11 @@ import '@fontsource/zen-kaku-gothic-new/500.css';
 import '@fontsource/space-mono/400.css';
 import './style.css';
 
-import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
 import { Engine } from './core/engine';
 import { createStarfield } from './render/starfield';
+import { PolytopeExhibit } from './scenes/polytopeExhibit';
 
 const canvas = document.getElementById('gl');
 if (!(canvas instanceof HTMLCanvasElement)) {
@@ -21,33 +23,33 @@ if (!(canvas instanceof HTMLCanvasElement)) {
 
 const engine = new Engine(canvas);
 
-const scene = new THREE.Scene();
+// Phase 2 は polytope 展示の単独表示。物語シーンとギャラリー切替は Phase 3 / 7。
+const exhibit = new PolytopeExhibit();
+exhibit.init({ engine });
 
+// starfield は共有オブジェクト。アクティブなシーンへ add() で付け替える(背景の連続性)
 const starfield = createStarfield();
-scene.add(starfield.group);
+exhibit.scene.add(starfield.group);
 
-// --- 仮のヒーローオブジェクト(Phase 2 の polytopeExhibit で置き換えて削除する) -----------
-// 基礎輝度 0.8: ACES + 加算合成で白飛びさせずにブルームだけを乗せる(既知の罠 #6)
-const heroMaterial = new THREE.LineBasicMaterial({
-  color: new THREE.Color(0x4fd8ff).multiplyScalar(0.8),
-  transparent: true,
-  blending: THREE.AdditiveBlending,
-  depthWrite: false,
-});
-const hero = new THREE.LineSegments(
-  new THREE.EdgesGeometry(new THREE.BoxGeometry(2, 2, 2)),
-  heroMaterial,
-);
-hero.name = 'phase0.smokeTestCube';
-scene.add(hero);
-// -----------------------------------------------------------------------------------------
+engine.setScene(exhibit.scene);
 
-engine.setScene(scene);
+// 正面(+z 軸上)からだと軸に揃った多胞体が「トンネル」に潰れて構造が読めない。
+// 距離は engine 既定の 6 のまま、3/4 ビューになる位置へ寄せる。
+engine.camera.position.set(2.7, 1.9, 5.0);
+engine.camera.lookAt(0, 0, 0);
 
-engine.onFrame((dt) => {
+const controls = new OrbitControls(engine.camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.minDistance = 2.5;
+controls.maxDistance = 20;
+controls.enablePan = false;
+
+engine.onFrame((dt, t) => {
+  controls.update();
   starfield.update(dt);
-  hero.rotation.y += dt * 0.28;
-  hero.rotation.x += dt * 0.17;
+  exhibit.update(dt, t);
 });
 
+exhibit.enter();
 engine.start();
