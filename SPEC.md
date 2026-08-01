@@ -5,8 +5,9 @@
 
 | | |
 |---|---|
+| 公開URL | **https://ops324.github.io/dimension/** |
 | リポジトリ | https://github.com/ops324/dimension |
-| 版 | Phase 12b 時点(PR #1〜#15 マージ済み)。独立監査エージェントによりコードとの整合性を検証済み |
+| 版 | Phase 12b + デプロイ設定 時点(PR #1〜#16 マージ済み)。独立監査エージェントによりコードとの整合性を検証済み |
 | 形態 | 完全静的サイト(サーバー処理・API・環境変数なし) |
 | 対応 | モダンブラウザ(WebGL2 必須)/ デスクトップ・モバイル・横持ち |
 
@@ -462,9 +463,28 @@ DEVフック `window.__DIMENSION__` はブートパスによって形が異な�
 
 ---
 
-## 13. 今後の候補
+## 13. デプロイ
 
-- 公開(`dist/` を Netlify / Vercel / GitHub Pages へ)
+**GitHub Actions → GitHub Pages** で自動公開している(`.github/workflows/deploy.yml`)。
+
+```
+push to main
+  → npm ci
+  → npx vitest run       # 失敗すれば公開されない(品質ゲート)
+  → npm run build
+  → actions/upload-pages-artifact(dist/)
+  → actions/deploy-pages
+```
+
+- Pages の公開元は API で `build_type=workflow` に設定済み(リポジトリ設定のブランチ指定ではなく Actions 経由)
+- `vite.config.ts` の `base: './'`(相対パス出力)により、`https://ops324.github.io/dimension/` のようなサブパス配信でも変更なしで動く。カスタムドメインに切り替えても同様
+- 手動再実行は `workflow_dispatch` でも可能
+
+---
+
+## 14. 今後の候補
+
 - 展示ごとのカメラホーム微調整(縦持ちドリーは現在4展示共通の1.6倍)
 - 実機DPR3端末での品質ティア再確認
 - 4次元回転の直接操作(ドラッグで回転平面を選ぶ)
+- カスタムドメインの検討

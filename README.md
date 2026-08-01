@@ -5,6 +5,8 @@
 
 **DIMENSION** is an artistic-scientific web experience for visualizing structures beyond three dimensions — the Hopf fibration, the Clifford torus, n-dimensional polytopes (n = 3…10), and the perception of one dimension seen from another.
 
+**🌐 公開URL: https://ops324.github.io/dimension/**
+
 ## 体験 / Experience
 
 - **物語「次元の階段」** — スクロールとともに、0次元の点が線・面・立方体・テッセラクト、そして6次元超立方体へと連続的に押し出されていく
@@ -63,8 +65,13 @@ npm run preview  # 本番ビルドの確認(:4173)
 
 ## 公開 / Deploy
 
+**本番は GitHub Actions で自動デプロイしている**(`.github/workflows/deploy.yml`)。
+`main` へ push するたびに `vitest` → `build` → GitHub Pages への公開が走る。手動実行は
+Actions タブから `workflow_dispatch` でも可能。
+
 `dist/` は**完全な静的サイト**(サーバー処理・環境変数・API依存なし)。
 `base: './'` で出力しているため、ドメイン直下でもサブパス配信でもそのまま動く。
+他のホスティングへ移す場合も同じ成果物をそのまま使える:
 
 ```bash
 npm run build
@@ -74,9 +81,6 @@ npx netlify deploy --prod --dir=dist
 
 # Vercel — 静的成果物をそのまま
 npx vercel deploy --prebuilt dist
-
-# GitHub Pages — dist を gh-pages ブランチへ
-npx gh-pages -d dist
 ```
 
 CI で組む場合のビルドコマンドは `npm ci && npm run build`、公開ディレクトリは `dist`。
