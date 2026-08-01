@@ -159,6 +159,13 @@ export class Gallery {
   /** カメラトゥイーン(毎フレームのアロケーションを避けるため使い回す) */
   private readonly tweenTarget = new Vector3();
   private tweenTime = 0;
+  /**
+   * いま構図へ掛かっている縦長ドリー倍率(Phase 12a)。
+   * レジストリのホーム姿勢は横長画面で決めた値なので、縦持ちではこの倍率ぶん
+   * 引かないと被写体が四辺から溢れる。resize では**前回との比**でカメラを
+   * 動かすので、ユーザーが回した向き(方位角・仰角)は一切壊れない。
+   */
+  private dolly = 1;
   /** perspective のカメラ誘導 */
   private readonly hint: CameraHint = { pos: new Vector3(), look: new Vector3() };
   private hintPausedUntil = 0;
@@ -233,6 +240,10 @@ export class Gallery {
     this.engine.onResize(() => {
       if (this.mode !== 'gallery') return;
       this.header.remeasure();
+      // 回転で aspect が変われば必要な引きも変わる。構図のずらし(safe area)より
+      // **先に**距離を合わせる ── setViewOffset は距離を知らないので順序は自由だが、
+      // 「まず被写体を画面へ収め、それから UI のぶんをずらす」という読み順に揃える
+      this.syncDolly();
       this.syncSafeArea();
     });
 
@@ -562,6 +573,38 @@ export class Gallery {
     this.tapId = -1;
   };
 
+  // --- 縦長ドリー ------------------------------------------------------------
+
+  /**
+   * 回転/リサイズで変わったアスペクトへ引きを合わせ直す(Phase 12a)。
+   *
+   * ホーム姿勢を貼り直すのではなく、**前回の倍率との比**でいまの距離を伸縮させる。
+   * ユーザーが自分で回して決めた方位角・仰角・寄り具合はそのまま残り、
+   * 変わるのは原点からの距離だけ ── 横 → 縦へ回した人にとっては
+   * 「見ていたものが画面へ収まり直す」だけの動きになる。
+   * トゥイーン中(ホーム復帰の途中)なら行き先も同じ比で連れて行く。
+   */
+  private syncDolly(): void {
+    const next = this.engine.portraitDolly;
+    const prev = this.dolly;
+    if (next === prev || prev <= 0) return;
+    const k = next / prev;
+    this.dolly = next;
+
+    const controls = this.ensureControls();
+    const entry = this.entries.get(this.activeId);
+    if (entry !== undefined) {
+      controls.minDistance = entry.minDistance * next;
+      controls.maxDistance = entry.maxDistance * next;
+    }
+    // 注視点からの相対で伸縮する。perspective の構図誘導は target を原点から
+    // 動かすことがあるので、原点基準のスカラー倍では純粋なドリーにならない。
+    // sub → multiplyScalar → add は Vector3 を 1 つも作らない(既存の器の上で完結)
+    const target = controls.target;
+    this.engine.camera.position.sub(target).multiplyScalar(k).add(target);
+    if (this.tweenTime > 0) this.tweenTarget.multiplyScalar(k);
+  }
+
   // --- セーフエリア ----------------------------------------------------------
 
   /**
@@ -602,15 +645,31 @@ export class Gallery {
     done?.();
   }
 
-  /** カメラのホーム姿勢と距離制限を適用する。instant=true は暗転中の即時適用 */
+  /**
+   * カメラのホーム姿勢と距離制限を適用する。instant=true は暗転中の即時適用。
+   *
+   * Phase 12a: ホーム位置ベクトルと min/maxDistance の**両方**へ縦長ドリーを掛ける。
+   * 位置だけ引いて距離制限を据え置くと、maxDistance が新しいホーム距離より手前に
+   * 来た瞬間に OrbitControls が次の update() で引き戻し、せっかく収めた構図が
+   * また溢れる(hopf: home 距離 8.85 → 14.16 に対し maxDistance 40 は無事だが、
+   * polytope は 5.0×1.6=8.0 に対し 20 で余裕がなくなる展示もある)。
+   * min も同じ倍率で押し上げないと、寄れる下限だけが相対的に深くなり
+   * 「縦持ちのときだけ図形へめり込める」という非対称が生まれる。
+   */
   private applyHome(id: ExhibitId, instant: boolean): void {
     const entry = this.entries.get(id);
     const controls = this.ensureControls();
     if (entry === undefined) return;
 
-    controls.minDistance = entry.minDistance;
-    controls.maxDistance = entry.maxDistance;
-    this.tweenTarget.set(entry.home[0], entry.home[1], entry.home[2]);
+    const dolly = this.engine.portraitDolly;
+    this.dolly = dolly;
+    controls.minDistance = entry.minDistance * dolly;
+    controls.maxDistance = entry.maxDistance * dolly;
+    this.tweenTarget.set(
+      entry.home[0] * dolly,
+      entry.home[1] * dolly,
+      entry.home[2] * dolly,
+    );
 
     if (instant || this.reduceMotion) {
       this.engine.camera.position.copy(this.tweenTarget);

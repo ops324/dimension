@@ -30,13 +30,17 @@ export interface PostFX {
   setSamples(samples: number): void;
   /** ブルームの内部解像度スケール。1 = drawingBuffer 等倍(mip 内部は 1/2) */
   setBloomScale(scale: number): void;
+  /** ブルームの強さ。**内部解像度とペアで**動かすこと(下の調律ノートを読むこと) */
+  setBloomStrength(strength: number): void;
+  /** ブルームの mip 合成半径。低解像度ブルームのにじみを締めるのはこちら */
+  setBloomRadius(radius: number): void;
   /** GradePass の有効/無効。DEV の before/after 比較用 */
   setGradeEnabled(on: boolean): void;
 }
 
 const DEFAULT_SAMPLES = 4;
 /**
- * ブルーム(Phase 11 で再調律)。
+ * ブルームの基準値(Phase 11 で実測して決めた調律)。
  *
  * Phase 8 までの既定は strength 0.95 / radius 0.4 / **threshold 0.1** で、
  * 監査の実測ではこの閾値が「veil(薄い膜)」の支配的な発生源だった:
@@ -46,16 +50,27 @@ const DEFAULT_SAMPLES = 4;
  * strength と radius も下げるが、**光の性格は変えない** ── 実測で FWHM
  * (にじみの半値幅)は据え置き、グローは芯の周りにだけ残る。
  * これらは測定して決めた値なので「改善」しないこと。
+ *
+ * ただし **この 3 つは「ULTRA での」基準値**である(Phase 12a)。
+ * 内部解像度(bloomScale)を変えると同じ strength でも見え方が変わるため、
+ * 解像度と強さ・半径はティアごとに**組で**決める ── その表は quality.ts の
+ * TIERS ただ 1 箇所にあり、ここはその表が参照する基準点を置くだけ。
+ *   ・bloomScale ↑(mip が細かくなる)→ 芯が締まり、同じ strength でも明るく出る
+ *     → HIGH は scale 1 と引き換えに strength を 0.40 → 0.32 へ落とす
+ *   ・bloomScale ↓(mip が粗くなる)→ 1 テクセルの受け持つ画面幅が広がりにじむ
+ *     → BALANCED は scale 0.75 に radius 0.25 → 0.18 を組ませて締める
  */
-const DEFAULT_BLOOM_STRENGTH = 0.4;
-const DEFAULT_BLOOM_RADIUS = 0.25;
+export const BLOOM_BASE_STRENGTH = 0.4;
+export const BLOOM_BASE_RADIUS = 0.25;
 const DEFAULT_BLOOM_THRESHOLD = 0.28;
 
 /**
  * グレードの既定強度(Phase 11 で再調律)。
  *   x: ビネット深度   — 隅で ×0.85(1 - 0.18 * 0.844)。「穴」ではなく空気として読める深さ
  *   y: グレイン振幅   — 表示値のピーク間 0.015(≒ ±1.9/255)。0.035 は暗部の
- *                       線と同じ振幅を持ち、細線の輪郭を濁らせていた(監査実測)
+ *                       線と同じ振幅を持ち、細線の輪郭を濁らせていた(監査実測)。
+ *                       **この値は DPR 等倍を前提にした量**なので、実効 DPR が
+ *                       端末の DPR より低いときは setSize() が下記の比で縮める
  *   z: 色収差         — 画面隅での放射オフセット(描画バッファ px)。1.2px は
  *                       線幅 1.7〜2.6px に対して大きすぎ、二重像として読めた
  */
@@ -165,12 +180,13 @@ export function buildPostFX(
   const renderPass = new RenderPass(scene, camera);
 
   // UnrealBloomPass は渡された resolution を内部で 1/2 にして mip 鎖を作る。
-  // よって drawingBuffer サイズを渡すとブラー内部解像度が drawingBuffer の 1/2 になり、
-  // プラン5節の ULTRA 指定と一致する(bloomScale=0.5 なら 1/4 = 降格時の指定)。
+  // よって drawingBuffer サイズを渡すとブラー内部解像度が drawingBuffer の 1/2 になる
+  // ── これが bloomScale=1(ULTRA / HIGH)の状態。BALANCED の 0.75 では 3/8 まで
+  // 落ちるので、そのぶん radius を締めてにじみを戻す(quality.ts の TIERS を参照)。
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(Math.round(cssWidth * ratio), Math.round(cssHeight * ratio)),
-    opts.bloomStrength ?? DEFAULT_BLOOM_STRENGTH,
-    opts.bloomRadius ?? DEFAULT_BLOOM_RADIUS,
+    opts.bloomStrength ?? BLOOM_BASE_STRENGTH,
+    opts.bloomRadius ?? BLOOM_BASE_RADIUS,
     opts.bloomThreshold ?? DEFAULT_BLOOM_THRESHOLD,
   );
 
@@ -191,6 +207,7 @@ export function buildPostFX(
   // ShaderPass は uniforms を clone するので、参照は**構築後の pass 側**から取る
   const gradeTime = gradePass.uniforms.uTime as THREE.IUniform<number>;
   const gradeResolution = gradePass.uniforms.uResolution.value as THREE.Vector2;
+  const gradeStrength = gradePass.uniforms.uStrength.value as THREE.Vector3;
 
   composer.addPass(renderPass);
   composer.addPass(bloomPass);
@@ -215,6 +232,20 @@ export function buildPostFX(
     );
     // グレインとディザは描画バッファのピクセル格子で刻む(色収差の px 換算もここ)
     gradeResolution.set(bufferWidth, bufferHeight);
+
+    /*
+      グレインを実効 DPR へ追従させる(Phase 12a)。
+
+      粒は **描画バッファの 1 テクセル = 1 粒** で刻む。DPR 3 の端末を BALANCED
+      (dprCap 1.5)で走らせると 1 粒が 2×2 の物理ピクセルへ拡大され、面積で 4 倍、
+      空間周波数は半分になる ── 同じ振幅でも「フィルムの粒」ではなく「砂嵐」として
+      読める(監査: 弱い端末ほどノイズが目立つ、の正体)。実効 DPR が端末の DPR を
+      下回るぶんだけ振幅を落とせば、見かけのざらつきが端末とティアによらず揃う。
+      Math.min(1, …) で上限を 1 に留めるのは、DPR 1 の外部ディスプレイのように
+      端末 DPR のほうが低い場合に**増幅しない**ため(基準値は等倍で決めた量)。
+    */
+    const nativeRatio = window.devicePixelRatio || 1;
+    gradeStrength.y = GRADE_GRAIN * Math.min(1, pixelRatio / nativeRatio);
   };
 
   // addPass() は renderTarget サイズ基準の誤った size を各 pass へ配ってしまうため、
@@ -251,6 +282,15 @@ export function buildPostFX(
       if (value === bloomScale) return;
       bloomScale = value;
       setSize(cssWidth, cssHeight, ratio);
+    },
+    // strength / radius は UnrealBloomPass が毎 render で compositeMaterial の
+    // uniform へ写す素のプロパティなので、代入するだけで次のフレームから効く
+    // (レンダーターゲットの作り直しは不要 = ティア切替でフレーム落ちしない)
+    setBloomStrength(strength: number): void {
+      bloomPass.strength = strength >= 0 ? strength : 0;
+    },
+    setBloomRadius(radius: number): void {
+      bloomPass.radius = radius >= 0 ? radius : 0;
     },
     setGradeEnabled(on: boolean): void {
       gradePass.enabled = on;

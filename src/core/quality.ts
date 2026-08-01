@@ -2,19 +2,25 @@ import { Vector2 } from 'three';
 
 import type { Engine } from './engine';
 import type { Starfield } from '../render/starfield';
+import { BLOOM_BASE_RADIUS, BLOOM_BASE_STRENGTH } from '../render/postfx';
 import { createSlidingPill, type SlidingPill } from '../ui/components/controls/Segmented';
 
 /**
  * 品質ティアと AUTO 制御(プラン5節「AUTO品質制御」/ 既知の罠 #12)。
  *
- * 方針は二段構え:
+ * 方針は三段構え:
  *  ① **エスカレーション起動** — いきなり最大では立ち上げない。HIGH(DPR2/MSAA4)で
  *     起動し、最初の 60 フレームの平均フレーム時間が 10ms を切っていれば ULTRA
- *     (DPR3/MSAA8/フル解像度ブルーム)へ昇格する。逆順(最大で起動→降格)は
- *     初回体験のカクつきと弱 GPU でのコンテキストロストを招くため採らない。
+ *     (DPR3/MSAA8)へ昇格する。逆順(最大で起動→降格)は初回体験のカクつきと
+ *     弱 GPU でのコンテキストロストを招くため採らない。
  *  ② **ガバナ** — 以後は 60 フレーム窓の平均を見張り、18ms 超が 2 窓続いたら
- *     1 段だけ降格する。**降格後の自動昇格はしない**(ヒステリシス)。上がるのは
- *     起動時のエスカレーション 1 回だけで、これがフリッカ(昇降の往復)を構造的に防ぐ。
+ *     1 段だけ降格する。
+ *  ③ **再昇格は 1 セッションに 1 回だけ**(Phase 12a)。降格したあと 20 窓
+ *     (≒ 1200 フレーム / 20 秒)続けて 12ms を切っていたら、1 段だけ戻す。
+ *     Phase 11 までは降格が不可逆で、**読み込み中の 1 回のしゃっくりだけで
+ *     実機が最後まで BALANCED に釘付けになっていた**(監査の指摘)。
+ *     「1 回だけ」に制限することで、往復するフリッカは構造的に起きない ──
+ *     上がれる回数が有限なので、昇降のループが定義上つくれない。
  *
  * 判定は fps ではなく**フレーム時間**で行う。120Hz ProMotion 環境では 60fps でも
  * 「1 フレーム 8.3ms」であり、fps 閾値では正常な環境を誤って降格させてしまう。
@@ -37,17 +43,61 @@ interface TierSpec {
   readonly samples: number;
   /** ブルーム内部解像度スケール。1 = drawingBuffer 等倍(mip 内部は 1/2) */
   readonly bloomScale: number;
+  /** ブルームの強さ。**bloomScale とペアで**決める(下の表の注を読むこと) */
+  readonly bloomStrength: number;
+  /** ブルームの mip 合成半径。低解像度ブルームのにじみを締めるのはこちら */
+  readonly bloomRadius: number;
   /** 星・ファイバーの密度スケール */
   readonly density: number;
 }
 
+/**
+ * ティア表(Phase 12a で光の 3 つを組にして再調律)。
+ *
+ * **bloomScale を単独で動かしてはならない。** 内部解像度を変えると同じ strength /
+ * radius でもにじみの性格が変わるので、この表では 3 つを必ず組で持つ。
+ * 基準値(BLOOM_BASE_*)は postfx.ts が持つ ULTRA の実測調律で、ここはそこからの
+ * **差分だけ**を書く ── 数値の二重管理を作らないため。
+ *
+ *   HIGH  : scale 0.5 → 1.0 と引き換えに strength 0.40 → 0.32。
+ *           監査は「scale 1 にすると HIGH と ULTRA の出力がバイト単位で一致する」
+ *           = HIGH が ULTRA と見分けのつかない絵になる、と指摘した。半解像度の
+ *           mip でにじませていたぶんが芯へ戻るので、強さを落とさないと**同じ
+ *           絵がただ明るくなる**。0.32 は「芯は締まったまま、総光量は据え置き」の値。
+ *   BALANCED: scale 0.5 → 0.75 と引き換えに radius 0.25 → 0.18。
+ *           解像度を上げるだけだと弱い端末での負荷が増えるだけなので、
+ *           半径を締めて「弱いがボケていない」光にする。strength は基準のまま ──
+ *           BALANCED で暗くすると、そもそも線の細い端末で作品が沈む。
+ *   ULTRA : 基準そのまま。ここを動かすときは postfx.ts の調律ノートから直すこと。
+ */
 const TIERS: Readonly<Record<QualityTier, TierSpec>> = {
-  BALANCED: { dprCap: 1.5, samples: 2, bloomScale: 0.5, density: 0.5 },
-  HIGH: { dprCap: 2, samples: 4, bloomScale: 0.5, density: 1 },
-  ULTRA: { dprCap: 3, samples: 8, bloomScale: 1, density: 1 },
+  BALANCED: {
+    dprCap: 1.5,
+    samples: 2,
+    bloomScale: 0.75,
+    bloomStrength: BLOOM_BASE_STRENGTH,
+    bloomRadius: 0.18,
+    density: 0.5,
+  },
+  HIGH: {
+    dprCap: 2,
+    samples: 4,
+    bloomScale: 1,
+    bloomStrength: 0.32,
+    bloomRadius: BLOOM_BASE_RADIUS,
+    density: 1,
+  },
+  ULTRA: {
+    dprCap: 3,
+    samples: 8,
+    bloomScale: 1,
+    bloomStrength: BLOOM_BASE_STRENGTH,
+    bloomRadius: BLOOM_BASE_RADIUS,
+    density: 1,
+  },
 };
 
-/** 降格のはしご(低 → 高)。自動で右へ進むのは起動時の 1 回だけ */
+/** ティアのはしご(低 → 高)。自動で右へ進むのは起動時の 1 回 + 再昇格の 1 回まで */
 const LADDER: readonly QualityTier[] = ['BALANCED', 'HIGH', 'ULTRA'];
 
 /** セレクタに並べる順(既定の AUTO が先頭) */
@@ -63,6 +113,17 @@ const DOWNGRADE_MS = 18;
 const BOOT_BAD_MS = 22;
 /** 降格に必要な連続窓数 */
 const BAD_WINDOWS = 2;
+/**
+ * 再昇格の閾値(Phase 12a)。降格の 18ms とのあいだに 6ms の不感帯を置く ──
+ * 12〜18ms のあいだをうろつく端末は、上がりも下がりもしない。
+ */
+const REESCALATE_MS = 12;
+/**
+ * 再昇格に必要な連続窓数。60 フレーム窓 × 20 ≒ 1200 フレーム(60fps で約 20 秒)。
+ * 降格の 2 窓に対して 10 倍の慎重さ ── 「重いかも」には素早く、
+ * 「もう軽い」には十分な証拠がそろってから応じる、という非対称は意図的。
+ */
+const REESCALATE_WINDOWS = 20;
 
 export interface QualityOptions {
   readonly engine: Engine;
@@ -82,10 +143,16 @@ export class QualityController {
   private ringFilled = 0;
   private ringSum = 0;
   private sinceCheck = 0;
-  /** 起動エスカレーションの判定が済んだか(以後は降格しかしない) */
+  /** 起動エスカレーションの判定が済んだか */
   private booted = false;
   private badWindows = 0;
   private flooredLogged = false;
+  /** 一度でも自動で降格したか(再昇格の前提条件) */
+  private downgraded = false;
+  /** 再昇格を使ったか。**1 セッションに 1 回だけ** ── これがフリッカの構造的な蓋 */
+  private reescalated = false;
+  /** REESCALATE_MS を切っている連続窓数 */
+  private goodWindows = 0;
 
   /** 表示更新用。文字列は変化時にだけ組み立てる(毎フレームは触らない) */
   private readonly bufferSize = new Vector2();
@@ -141,6 +208,7 @@ export class QualityController {
     if (mode === this.mode && mode === 'AUTO') return;
     this.mode = mode;
     this.badWindows = 0;
+    this.goodWindows = 0;
     this.flooredLogged = false;
     if (mode !== 'AUTO') {
       this.booted = true; // 起動窓の途中で選ばれたらエスカレーションは打ち切る
@@ -185,6 +253,7 @@ export class QualityController {
     this.ringSum = 0;
     this.sinceCheck = 0;
     this.badWindows = 0;
+    this.goodWindows = 0;
   };
 
   private evaluate(avg: number): void {
@@ -195,6 +264,9 @@ export class QualityController {
         this.apply('ULTRA');
         console.info(`[quality] escalated to ULTRA (avg ${avg.toFixed(1)}ms)`);
       } else if (avg > BOOT_BAD_MS) {
+        // 起動窓が重いのは「弱い端末」だけでなく「読み込みと重なった 1 窓」でも
+        // 起こる。ここも降格として数え、あとで実測が伴えば 1 回だけ戻れるようにする
+        this.downgraded = true;
         this.apply('BALANCED');
         console.info(`[quality] boot window too slow (avg ${avg.toFixed(1)}ms) → BALANCED`);
       } else {
@@ -207,9 +279,11 @@ export class QualityController {
 
     if (avg <= DOWNGRADE_MS) {
       this.badWindows = 0;
+      this.considerReescalation(avg);
       return;
     }
     this.badWindows++;
+    this.goodWindows = 0;
     if (this.badWindows < BAD_WINDOWS) return;
     this.badWindows = 0;
 
@@ -222,9 +296,41 @@ export class QualityController {
       return;
     }
     const next = LADDER[index - 1];
+    this.downgraded = true;
     this.apply(next);
     console.info(
       `[quality] governor: avg ${avg.toFixed(1)}ms over ${BAD_WINDOWS} windows → ${next}`,
+    );
+  }
+
+  /**
+   * 降格からの復帰(Phase 12a)。**1 セッションに 1 回だけ**、1 段だけ戻す。
+   *
+   * 前提は 3 つ ── ① 一度は自動で降格している ② まだ 1 回も戻していない
+   * ③ REESCALATE_WINDOWS 窓**連続**で REESCALATE_MS を切っている。
+   * 途中で 1 窓でも 12ms を超えたら数え直し(下の goodWindows=0)なので、
+   * 「たまたま軽い瞬間があった」では上がらない。
+   */
+  private considerReescalation(avg: number): void {
+    if (this.reescalated || !this.downgraded) return;
+    if (avg >= REESCALATE_MS) {
+      this.goodWindows = 0;
+      return;
+    }
+    this.goodWindows++;
+    if (this.goodWindows < REESCALATE_WINDOWS) return;
+
+    // 使い切りの権利はここで必ず消費する(天井にいて上がれない場合も含む)──
+    // そうしないと最上位のまま数え続けて、次の降格の直後に即座に戻ってしまう
+    this.reescalated = true;
+    const index = LADDER.indexOf(this.tier);
+    if (index >= LADDER.length - 1) return;
+
+    const next = LADDER[index + 1];
+    this.apply(next);
+    console.info(
+      `[quality] governor: avg ${avg.toFixed(1)}ms under ${REESCALATE_MS}ms ` +
+        `for ${REESCALATE_WINDOWS} windows → re-escalated to ${next} (once per session)`,
     );
   }
 
@@ -237,7 +343,10 @@ export class QualityController {
     this.resetWindow();
 
     this.engine.setQuality({ samples: spec.samples, dpr: spec.dprCap });
+    // 光の 3 つは必ず一緒に配る(TIERS の注記のとおり組で意味を持つ)
     this.engine.postfx.setBloomScale(spec.bloomScale);
+    this.engine.postfx.setBloomStrength(spec.bloomStrength);
+    this.engine.postfx.setBloomRadius(spec.bloomRadius);
     this.starfield.setDensity(spec.density);
 
     // 展示側が**任意で**購読できる緩い口。誰も聞いていなくても成立する設計にしておく
@@ -251,7 +360,8 @@ export class QualityController {
     this.engine.getDrawingBufferSize(this.bufferSize);
     console.info(
       `[quality] tier=${tier} dpr=${this.engine.renderer.getPixelRatio()} ` +
-        `samples=${this.engine.postfx.samples} bloom=×${spec.bloomScale} ` +
+        `samples=${this.engine.postfx.samples} ` +
+        `bloom=×${spec.bloomScale}/s${spec.bloomStrength}/r${spec.bloomRadius} ` +
         `buffer=${this.bufferSize.x}×${this.bufferSize.y}`,
     );
   }
