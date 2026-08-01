@@ -49,6 +49,8 @@
      余白も高さも 1 か所で決めることで、左右の 2 つが同じ帯の上に乗る */
   --hud-inset: var(--s4);
   --pill-h: 34px;
+  /* 計器を縦に積むときの 1 段ぶん(ピル 1 個 + 隙間)。柱の算術はこれ 1 本で書く */
+  --hud-stack: calc(var(--pill-h) + var(--s2));
 }
 
 *,
@@ -1783,6 +1785,158 @@ body.drawer-open #quality {
   color: #eafbff;
 }
 
+/* ------------------------------------------------------------ 音のチップ
+
+   品質チップと**同じ寸法・同じヘアライン・同じ書体**で、その真下に座る。
+   品質のメニューは上へ開くので、下に置けば構造的に重ならない ──
+   位置の算術は --hud-stack(ピル 1 段)だけで書く。
+
+   物語 … 右下に [音] 、その上に [品質]
+   ギャラリー … 左下の柱へ合流して、下から [展示カウンタ][音][品質]
+                (右側は展示パネルのドックが占めているため)
+*/
+
+#sound {
+  position: fixed;
+  right: var(--hud-inset);
+  bottom: var(--hud-inset);
+  z-index: 5;
+  font-family: var(--font-mono);
+  transition:
+    opacity var(--t-fast) linear,
+    visibility var(--t-fast);
+}
+
+/* 音チップが在るときだけ品質チップが 1 段上がる(単独展示ブートでは動かない) */
+body.has-sound #quality {
+  bottom: calc(var(--hud-inset) + var(--hud-stack));
+}
+
+body.mode-gallery #sound {
+  right: auto;
+  left: var(--hud-inset);
+  bottom: calc(var(--hud-inset) + var(--hud-stack));
+}
+
+body.mode-gallery.has-sound #quality {
+  bottom: calc(var(--hud-inset) + var(--hud-stack) * 2);
+}
+
+/* 解説を開いているあいだは引っ込む(品質チップと同じ判断) */
+body.drawer-open #sound {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.s-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: var(--pill-h);
+  padding: 0 var(--s3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--t-fast) linear,
+    border-color var(--t-fast) linear;
+}
+
+.s-chip:hover {
+  color: var(--ink);
+  border-color: rgba(79, 216, 255, 0.4);
+}
+
+.s-chip:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+#sound[data-on='true'] .s-chip {
+  color: var(--ink);
+  border-color: rgba(79, 216, 255, 0.32);
+}
+
+/* ◌(消) / ●(鳴)。状態を語るのはこの 1 文字と、次のバー 3 本だけ */
+.s-chip-glyph {
+  font-size: 0.62rem;
+  letter-spacing: 0;
+  color: var(--ink-dim);
+  transition:
+    color var(--t-fast) linear,
+    text-shadow var(--t-fast) linear;
+}
+
+#sound[data-on='true'] .s-chip-glyph {
+  color: var(--cyan);
+  text-shadow: 0 0 12px rgba(79, 216, 255, 0.55);
+}
+
+/* 3 本のレベル計。動くのは ON のときだけ ── OFF では 1 フレームも仕事をしない */
+.s-bars {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 8px;
+}
+
+.s-bar {
+  width: 2px;
+  height: 100%;
+  border-radius: 1px;
+  background: rgba(232, 236, 251, 0.24);
+  transform-origin: 50% 100%;
+}
+
+/* 消えているときも「計器の目盛り」に見えるよう、3 本の高さを揃えない
+   (揃えると 9px の文字列の末尾で三点リーダに読めてしまう) */
+.s-bar:nth-child(1) {
+  transform: scaleY(0.3);
+}
+
+.s-bar:nth-child(2) {
+  transform: scaleY(0.62);
+}
+
+.s-bar:nth-child(3) {
+  transform: scaleY(0.4);
+}
+
+#sound[data-on='true'] .s-bar {
+  background: var(--cyan);
+  box-shadow: 0 0 6px rgba(79, 216, 255, 0.5);
+  animation: s-bar-breathe 2.4s var(--ease-inout-soft) infinite;
+}
+
+/* 3 本の周期をずらす(素数めいた比にして、揃って脈打たないようにする) */
+#sound[data-on='true'] .s-bar:nth-child(2) {
+  animation-duration: 3.1s;
+  animation-delay: -0.8s;
+}
+
+#sound[data-on='true'] .s-bar:nth-child(3) {
+  animation-duration: 2.7s;
+  animation-delay: -1.6s;
+}
+
+@keyframes s-bar-breathe {
+  0%,
+  100% {
+    transform: scaleY(0.22);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
 /* ============================================================ COMPONENTS
    ここから下は src/ui/components/*.ts が生成する DOM のスタイル。
    値はすべて tokens.css のトークンを参照する。
@@ -2355,7 +2509,17 @@ html {
 
   body.mode-gallery #quality {
     left: var(--hud-inset);
-    bottom: calc(46svh + var(--s2) + var(--pill-h) + var(--s2));
+    bottom: calc(46svh + var(--s2) + var(--hud-stack));
+  }
+
+  /* 音チップも同じ柱に積む。下から [ボトムシート][展示カウンタ][音][品質] */
+  body.mode-gallery #sound {
+    left: var(--hud-inset);
+    bottom: calc(46svh + var(--s2) + var(--hud-stack));
+  }
+
+  body.mode-gallery.has-sound #quality {
+    bottom: calc(46svh + var(--s2) + var(--hud-stack) * 2);
   }
 
   .q-opt {
@@ -2498,8 +2662,17 @@ html {
   .q-chip,
   .q-opt,
   .q-pill,
-  .q-readout {
+  .q-readout,
+  #sound,
+  .s-chip,
+  .s-chip-glyph {
     transition: none;
+  }
+
+  /* レベル計は止める。存在は残す ── ON であることは ● と色が語る */
+  #sound[data-on='true'] .s-bar {
+    animation: none;
+    transform: scaleY(0.6);
   }
 
   .pn-range::-webkit-slider-thumb {

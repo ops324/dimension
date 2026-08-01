@@ -234,6 +234,8 @@ export class Gallery {
     if (this.mode === 'gallery' || this.busy) return;
     this.busy = true;
     this.savedScrollY = window.scrollY;
+    // モード遷移が受理された合図(Phase 10 の音づけが購読する。誰も聞かなくても成立する)
+    window.dispatchEvent(new CustomEvent<GalleryMode>('dimension:mode', { detail: 'gallery' }));
 
     this.fade(true, () => {
       this.ensureExhibits();
@@ -269,6 +271,7 @@ export class Gallery {
   exitGallery(): void {
     if (this.mode === 'narrative' || this.busy) return;
     this.busy = true;
+    window.dispatchEvent(new CustomEvent<GalleryMode>('dimension:mode', { detail: 'narrative' }));
 
     this.fade(true, () => {
       // 切替待ちのタイマーが残っていると、物語へ戻ったあとに展示シーンへ
@@ -315,6 +318,8 @@ export class Gallery {
     if (next === undefined) return;
 
     this.active?.exit();
+    // 切り替えが受理された合図(Phase 10 の音づけが購読する)
+    window.dispatchEvent(new CustomEvent<ExhibitId>('dimension:tab', { detail: id }));
     // タブの下線と見出しは**押した瞬間に**動きはじめる ── 展示の差し替えを
     // 待つ 380ms のあいだ、UI だけが先に次の展示を指している状態を作る
     this.tabs.setActive(id);
