@@ -1942,6 +1942,64 @@ body.drawer-open #sound {
   }
 }
 
+/* はじめて音を入れたときだけ、6 秒だけ出る一行(Phase 12b)。
+
+   置く場所はチップの**真上ではなく横**である ── 真上には品質チップが座って
+   いるので(--hud-stack 1 段ぶん上)、そこへ出すと必ず重なる。物語では右下の
+   チップから左へ、ギャラリーでは左下のチップから右へ伸ばす。どちらも
+   伸びていく先は空いている(狭い画面だけは横も塞がっているので、下の
+   @media で 2 段上へ逃がす)。触れないので pointer-events は切る。 */
+.s-hint {
+  position: absolute;
+  right: calc(100% + var(--s2));
+  top: 50%;
+  translate: 0 -50%;
+  width: max-content;
+  max-width: min(23rem, calc(100vw - var(--hud-inset) * 2 - 9rem));
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 11px;
+  line-height: 1.7;
+  letter-spacing: 0.02em;
+  color: var(--ink-dim);
+  text-align: right;
+  text-shadow: 0 1px 14px rgba(5, 6, 15, 0.95);
+  pointer-events: none;
+}
+
+body.mode-gallery .s-hint {
+  right: auto;
+  left: calc(100% + var(--s2));
+  text-align: left;
+}
+
+/* 狭い画面ではチップの横が空いていない ── 左には次元カウンタが同じ帯に座って
+   いる(実測で 155px 重なった)。そこで**計器の柱を 2 段跳び越して**上へ置く。
+   1 段では品質チップと同じ高さになるので、跳ぶのは 2 段でなければならない。
+   伸びる向きはチップの寄っている側の逆 ── 物語は右下から左へ、ギャラリーは
+   左下から右へ。どちらも画面幅から余白 2 つぶんを引いた幅に収まる。 */
+@media (max-width: 768px) {
+  .s-hint,
+  body.mode-gallery .s-hint {
+    top: auto;
+    bottom: calc(100% + var(--hud-stack) + var(--s2));
+    translate: none;
+    max-width: calc(100vw - var(--hud-inset) * 2);
+  }
+
+  .s-hint {
+    right: 0;
+    left: auto;
+    text-align: right;
+  }
+
+  body.mode-gallery .s-hint {
+    right: auto;
+    left: 0;
+    text-align: left;
+  }
+}
+
 /* ------------------------------------------------ 没入モード(Phase 11)
 
    ギャラリーの四辺は、タブ帯・見出し・操作卓・計器・ナビで埋まっている。

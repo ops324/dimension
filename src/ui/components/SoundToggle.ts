@@ -12,11 +12,16 @@
  *
  * 初回訪問だけ、プリローダが退いたあとに 2 回だけ小さく脈打つ。
  * 誘いであって催促ではないので、一度でも設定を選んだ人には二度と出ない。
+ *
+ * Phase 12b: **はじめて音を入れたときだけ**、チップの隣に一行だけ言葉を置く。
+ * この空間の環境音には左右の耳でわずかに高さの違う正弦が含まれていて、
+ * その拍はスピーカーでは(左右の音が空気の中で混ざってしまうので)現れない ──
+ * それを伝えるためだけの一行で、6 秒で自分から消える。トグルは増やさない。
  */
 
 import { audio, type SoundDetail } from '../../audio/engine';
 import { toggleOff, toggleOn } from '../../audio/sfx';
-import { EASE, h, prefersReducedMotion, type Component } from './component';
+import { DUR, EASE, h, play, prefersReducedMotion, type Component } from './component';
 import { magnetize, type Magnet } from './MagneticButton';
 
 /** 消えている / 鳴っている の記号 */
@@ -32,6 +37,38 @@ const PULSE_FALLBACK_MS = 3500;
 /** プリローダが消えてから脈打つまでの間(ms)。星空が見えてから誘う */
 const PULSE_DELAY_MS = 900;
 
+/**
+ * ヘッドフォンの一行。
+ *
+ * **効能は書かない**。書いてよいのは「何が鳴っているか」だけである ──
+ * 左右の耳にわずかに違う高さの正弦があり、その差が拍として聞こえる。
+ * それがどう作用するかは書かないし、この作品は何も約束しない。
+ */
+const HINT_KEY = 'dimension.sound.hint';
+const HINT_TEXT = 'ヘッドフォンを ── うなりは空気ではなく、耳の中で生まれる。';
+/** 出したまま置く時間(ms)。読み切って、まだ少し残る長さ */
+const HINT_HOLD_MS = 6000;
+/** 引きの尺(ms)。急がずに消える */
+const HINT_FADE_MS = 900;
+
+/** localStorage は投げうる(プライベートモード等)。読み書きとも黙って諦める */
+function hintShown(): boolean {
+  try {
+    return window.localStorage.getItem(HINT_KEY) !== null;
+  } catch {
+    // 読めない環境では「まだ出していない」として扱う(出しすぎるほうがまだ良い)
+    return false;
+  }
+}
+
+function markHintShown(): void {
+  try {
+    window.localStorage.setItem(HINT_KEY, 'shown');
+  } catch {
+    // 書けない環境では、このセッションのあいだだけの一度きりになる
+  }
+}
+
 export class SoundToggle implements Component {
   readonly el: HTMLElement;
 
@@ -43,6 +80,13 @@ export class SoundToggle implements Component {
   private pulseTimer = 0;
   private pulse: Animation | null = null;
   private invited = false;
+
+  /** ヘッドフォンの一行。出ているあいだだけ非 null */
+  private hint: HTMLElement | null = null;
+  private hintTimer = 0;
+  private hintAnim: Animation | null = null;
+  /** localStorage が読めない環境でも、少なくとも 1 セッションに 1 回に抑える */
+  private hinted = false;
 
   constructor() {
     this.el = h('div', 'sound', { id: 'sound' });
@@ -78,6 +122,7 @@ export class SoundToggle implements Component {
 
   destroy(): void {
     this.cancelInvitation();
+    this.dropHint();
     this.magnet.destroy();
     this.chip.removeEventListener('click', this.onClick);
     window.removeEventListener('dimension:sound', this.onSoundEvent);
@@ -106,7 +151,10 @@ export class SoundToggle implements Component {
 
   private readonly onSoundEvent = (event: Event): void => {
     const detail = (event as CustomEvent<SoundDetail>).detail;
-    this.paint(detail?.enabled === true);
+    const on = detail?.enabled === true;
+    this.paint(on);
+    // 「はじめて音を入れた」瞬間 ── 音が立ち上がるのと同じ合図で一行を置く
+    if (on) this.showHint();
   };
 
   private paint(on: boolean): void {
@@ -114,6 +162,73 @@ export class SoundToggle implements Component {
     this.el.dataset.on = on ? 'true' : 'false';
     const glyph = on ? GLYPH_ON : GLYPH_OFF;
     if (this.glyph.textContent !== glyph) this.glyph.textContent = glyph;
+  }
+
+  // --- ヘッドフォンの一行 ----------------------------------------------------
+
+  /**
+   * 一生に一度だけ出る一行。**新しいトグルは作らない** ── 音を入れるという
+   * 一度きりの選択に、説明をひとつ添えるだけである。
+   *
+   * 中身を空のまま挿してから次のフレームで文字を入れる: aria-live は
+   * 「すでに在る領域の中身が変わった」ときに読まれるので、要素と文字を同時に
+   * 差し込むと読み上げが落ちる支援技術がある。
+   */
+  private showHint(): void {
+    if (this.hinted || this.hint !== null) return;
+    if (hintShown()) return;
+    this.hinted = true;
+    markHintShown();
+
+    const hint = h('p', 's-hint', { role: 'status', 'aria-live': 'polite' });
+    this.hint = hint;
+    this.el.append(hint);
+    requestAnimationFrame(() => {
+      hint.textContent = HINT_TEXT;
+    });
+
+    play(hint, [{ opacity: 0 }, { opacity: 1 }], {
+      duration: DUR.med,
+      easing: EASE.outQuint,
+    });
+
+    this.hintTimer = window.setTimeout(() => {
+      this.hintTimer = 0;
+      this.fadeHint();
+    }, HINT_HOLD_MS);
+  }
+
+  /** 引いて、消す。消えたあとに DOM から抜くので、残骸を置いていかない */
+  private fadeHint(): void {
+    const hint = this.hint;
+    if (hint === null) return;
+
+    const anim = play(hint, [{ opacity: 1 }, { opacity: 0 }], {
+      duration: HINT_FADE_MS,
+      easing: EASE.inoutSoft,
+      fill: 'forwards',
+    });
+    this.hintAnim = anim;
+    anim.onfinish = (): void => {
+      this.hintAnim = null;
+      this.hint = null;
+      hint.remove();
+    };
+  }
+
+  /** 畳む(destroy から)。待ちも animation も残さない */
+  private dropHint(): void {
+    if (this.hintTimer !== 0) {
+      window.clearTimeout(this.hintTimer);
+      this.hintTimer = 0;
+    }
+    if (this.hintAnim !== null) {
+      this.hintAnim.onfinish = null;
+      this.hintAnim.cancel();
+      this.hintAnim = null;
+    }
+    this.hint?.remove();
+    this.hint = null;
   }
 
   // --- 初回訪問の誘い --------------------------------------------------------

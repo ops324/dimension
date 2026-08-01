@@ -9,6 +9,7 @@
  * ここが知っていること:
  *   ・どの DOM がどの音を持つか(セレクタ表)
  *   ・次元の階を跨いだ瞬間(scrollDirector.dimLevel の床が変わった瞬間)
+ *   ・いまの次元が両耳の拍を何 Hz にするか(Phase 12b)
  * ここが知らないこと:
  *   ・音の作り方(sfx.ts)・鳴らしてよいか(engine.ts)
  */
@@ -52,6 +53,23 @@ const BELL_MIN = 1;
 const BELL_MAX = 6;
 /** 「まだ一度も測っていない」を表す番兵 */
 const NOT_PRIMED = -999;
+
+/**
+ * 次元 → 両耳の拍(Hz)。**鐘とまったく同じ算術の階段**である。
+ *
+ * 鐘は次元がひとつ上がるごとに +98Hz(倍音列の次の節)へ移る。同じ足し算を
+ * 「高さ」ではなく「拍」に適用したのがこの直線で、傾きは 4/3:
+ *
+ *     0D → 2.00Hz(δ)   3D → 6.00Hz(θ)   6D → 10.00Hz(α)
+ *
+ * 低い次元ほど遅く、次元が積み上がるほど速く脈を打つ。効能の話ではない ──
+ * 階段を上がるという一本の比喩を、音程に続いて拍でももう一度なぞるだけである。
+ */
+const BEAT_BASE_HZ = 2;
+const BEAT_PER_DIM_HZ = 4 / 3;
+/** 階段が張る帯。物語の外(ギャラリー・単独展示)は上端で据え置く */
+const BEAT_MIN_HZ = 2;
+const BEAT_MAX_HZ = 10;
 
 export interface AudioWiringOptions {
   readonly engine: Engine;
@@ -174,14 +192,24 @@ export class AudioWiring {
   /**
    * 毎フレーム。**アロケーションなし・数値の比較だけ**。
    *
-   * dimLevel の床が変わった瞬間に鐘を撞く。上りでも下りでも撞くので、
-   * 下りると低い倍音が返ってくる ── 階段を降りている音として正しい。
+   * ひとつは連続量 ── dimLevel をそのまま拍(Hz)へ写す。書き込みの間引きは
+   * 層の側が持っているので、ここは毎フレーム素直に差し出してよい。
+   * もうひとつは離散量 ── dimLevel の床が変わった瞬間に鐘を撞く。上りでも
+   * 下りでも撞くので、下りると低い倍音が返ってくる(階段を降りている音)。
    *
    * public なのは、rAF が止まるヘッドレス検証から同じ関数を叩けるようにするため
    * (二重に呼ばれても、床が動いていなければ何もしない)。
    */
   readonly step = (): void => {
     const director = this.director;
+
+    // 物語のときだけ次元が拍を決める。ギャラリーと単独展示では上端で据え置く
+    audio.setBeat(
+      director === null || !this.narrative
+        ? BEAT_MAX_HZ
+        : clampBeat(BEAT_BASE_HZ + BEAT_PER_DIM_HZ * director.dimLevel),
+    );
+
     if (director === null) return;
 
     const floor = Math.floor(director.dimLevel + FLOOR_HYSTERESIS);
@@ -203,6 +231,11 @@ export class AudioWiring {
     bell(k);
     if (import.meta.env.DEV) this.bells.push(k);
   };
+}
+
+/** 帯の外へは出さない(章の次元が 0..6 の外へ出ても発振器を壊さない) */
+function clampBeat(hz: number): number {
+  return hz < BEAT_MIN_HZ ? BEAT_MIN_HZ : hz > BEAT_MAX_HZ ? BEAT_MAX_HZ : hz;
 }
 
 /** 唯一の接続口。main.ts がクローム構築後に 1 回だけ呼ぶ */
