@@ -33,6 +33,12 @@ export interface Chapter {
   readonly unit?: string;
   /** 縦組みの飾り(writing-mode: vertical-rl) */
   readonly caption: string;
+  /**
+   * 章番号の下に添える計器の読み(Space Mono・装飾)。
+   * 「いま何本目の軸を足したか」と「その軸の伸びる範囲」を書く。
+   * 単位立方体 [0,1]^n を素直に読み下したもので、数としても正しい。
+   */
+  readonly coord?: string;
   /** セクション高さと文字組みの出し分け */
   readonly role: ChapterRole;
   /** プロローグのみ: スクロール誘導 */
@@ -48,6 +54,7 @@ export const CHAPTERS: readonly Chapter[] = [
     dim: 0,
     index: 'PROLOGUE',
     caption: '序章',
+    coord: 'AXIS -- / EXTENT ∅',
     role: 'prologue',
     hint: 'SCROLL',
     jp: {
@@ -65,6 +72,7 @@ export const CHAPTERS: readonly Chapter[] = [
     index: 'CH.00',
     unit: '0D',
     caption: '第〇章',
+    coord: 'AXIS 00 / EXTENT ∅',
     role: 'chapter',
     jp: {
       title: '大きさを持たない場所',
@@ -81,6 +89,7 @@ export const CHAPTERS: readonly Chapter[] = [
     index: 'CH.01',
     unit: '1D',
     caption: '第一章',
+    coord: 'AXIS 01 / EXTENT ∈ [0,1]',
     role: 'chapter',
     jp: {
       title: '点が、動く',
@@ -97,6 +106,7 @@ export const CHAPTERS: readonly Chapter[] = [
     index: 'CH.02',
     unit: '2D',
     caption: '第二章',
+    coord: 'AXIS 02 / EXTENT ∈ [0,1]^2',
     role: 'chapter',
     jp: {
       title: '線が、横切る',
@@ -113,6 +123,7 @@ export const CHAPTERS: readonly Chapter[] = [
     index: 'CH.03',
     unit: '3D',
     caption: '第三章',
+    coord: 'AXIS 03 / EXTENT ∈ [0,1]^3',
     role: 'chapter',
     jp: {
       title: 'わたしたちの部屋',
@@ -129,6 +140,7 @@ export const CHAPTERS: readonly Chapter[] = [
     index: 'CH.04',
     unit: '4D',
     caption: '第四章',
+    coord: 'AXIS 04 / EXTENT ∈ [0,1]^4',
     role: 'chapter',
     jp: {
       title: '四つ目の方向',
@@ -146,6 +158,7 @@ export const CHAPTERS: readonly Chapter[] = [
     index: 'CH.05',
     unit: '5D',
     caption: '第五章',
+    coord: 'AXIS 05 / EXTENT ∈ [0,1]^5',
     role: 'chapter',
     jp: {
       title: '規則だけが、先へ行く',
@@ -162,6 +175,7 @@ export const CHAPTERS: readonly Chapter[] = [
     index: 'CH.06',
     unit: '6D',
     caption: '第六章',
+    coord: 'AXIS 06 / EXTENT ∈ [0,1]^6',
     role: 'chapter',
     jp: {
       title: 'ふたつの回転が、同時に',
@@ -178,6 +192,7 @@ export const CHAPTERS: readonly Chapter[] = [
     dim: 6,
     index: 'EPILOGUE',
     caption: '終章',
+    coord: 'AXIS 07+ / EXTENT ∈ [0,1]^n',
     role: 'epilogue',
     cta: 'ギャラリーを探索する',
     jp: {

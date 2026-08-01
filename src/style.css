@@ -1,15 +1,23 @@
 /* DIMENSION — stylesheet
    フォントは main.ts が @fontsource から import する(CDN依存なし)。
 
+   Phase 9a: 動きと余白の一次情報源は ui/components/tokens.css へ移した。
+   ここで新しく書く値(尺・イージング・ヘアライン・間隔・z)はすべて
+   そのトークンを参照する ── 既存の記述は触った箇所だけ順次寄せていく。
+
    レイヤ構成(z-index):
-     0  #gl        全画面固定キャンバス(高次元ジオメトリ)
-     1  #narrative 物語テキスト(pointer-events: none / CTA だけ auto)
-     2  #hud / #perspective-inset / #perspective-caption
-     3  #progress  スクロール進捗バー
-     4  #gallery   ギャラリーシェル(タブ・ヘッダ・パネル・解説ドロワー)
-     5  #mode-nav  物語 ⇄ ギャラリーのトップナビ
-     6  #mode-fade モード遷移の暗転
+     0   #gl        全画面固定キャンバス(高次元ジオメトリ)
+     1   #narrative 物語テキスト(pointer-events: none / CTA だけ auto)
+     2   #hud / #perspective-inset / #perspective-caption
+     3   #progress  スクロール進捗バー
+     4   #gallery   ギャラリーシェル(タブ・ヘッダ・パネル・解説ドロワー)
+     5   #mode-nav  物語 ⇄ ギャラリーのトップナビ
+     80  .tx        モード遷移の幕(TransitionOverlay / 旧 #mode-fade)
+     90  .pl        プリローダ(Preloader)
+     100 .dc        計器カーソル(Cursor)
 */
+
+@import './ui/components/tokens.css';
 
 :root {
   /* パレット(プラン5節) */
@@ -154,12 +162,14 @@ body.fonts-ready #narrative {
 /*
   fit-content: ディスプレイ英字の実幅がそのままブロック幅になる。
   右寄せの章でも英字の右端がガターに揃い、本文だけが 34ch で折り返す。
+
+  opacity / transform は overlays.ts の振り付け(WAAPI)が唯一の書き手。
+  ここでは「まだ出ていない」初期状態だけを宣言する。
 */
 .chapter-inner {
   width: fit-content;
   max-width: 100%;
   opacity: 0;
-  transform: translate3d(0, var(--ty, 0px), 0);
 }
 
 /* ------------------------------------------------------- 章番号 / 見出し */
@@ -179,6 +189,21 @@ body.fonts-ready #narrative {
 
 .chapter[data-align='right'] .ch-index {
   justify-content: flex-end;
+}
+
+/*
+  計器の読み。章番号の真下に小さく置く ── 「何本目の軸か」と「その伸びる範囲」。
+  読み上げ対象ではない装飾なので、視覚的にも 0.4 の濃度までしか出さない。
+*/
+.ch-coord {
+  margin: -0.9rem 0 clamp(0.9rem, 2.2vh, 1.6rem);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 400;
+  letter-spacing: 0.2em;
+  line-height: 1;
+  color: var(--ink-dim);
+  opacity: 0.4;
 }
 
 .ch-rule {
@@ -327,20 +352,29 @@ body.fonts-ready #narrative {
   }
 }
 
-/* ------------------------------------------------------------------ CTA */
+/* ------------------------------------------------------------------ CTA
+
+   透明な器に 1px のヘアラインだけ。ホバーで**左からグラデーションが掃く**
+   (::before の scaleX 0→1)。塗りが届いた側から文字色が背景色へ反転するので、
+   ボタンが「点灯する」のではなく「塗り替わる」ように見える。
+   背景色は持たないが backdrop-filter は残す ── 星空の上でも文字が読めるように。
+*/
 
 .cta {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
   pointer-events: auto;
   display: inline-flex;
   align-items: center;
-  gap: 0.85rem;
+  gap: var(--s2);
   margin-top: clamp(1.6rem, 4vh, 2.6rem);
-  padding: 0.8rem 1.9rem;
-  border: 1px solid rgba(79, 216, 255, 0.35);
+  padding: var(--s3) var(--s5);
+  border: 1px solid var(--hairline-strong);
   border-radius: 999px;
-  background: rgba(10, 12, 24, 0.5);
-  -webkit-backdrop-filter: blur(12px) saturate(140%);
-  backdrop-filter: blur(12px) saturate(140%);
+  background: transparent;
+  -webkit-backdrop-filter: blur(10px) saturate(130%);
+  backdrop-filter: blur(10px) saturate(130%);
   color: var(--ink);
   font-family: var(--font-body);
   font-weight: 500;
@@ -349,41 +383,45 @@ body.fonts-ready #narrative {
   letter-spacing: 0.14em;
   cursor: pointer;
   transition:
-    border-color 0.25s ease,
-    background-color 0.25s ease,
-    color 0.25s ease,
-    box-shadow 0.35s ease,
-    transform 0.25s ease;
+    color var(--t-med) var(--ease-out-quint),
+    border-color var(--t-med) var(--ease-out-quint);
+}
+
+.cta::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(90deg, var(--cyan), var(--violet) 52%, var(--magenta));
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  transition: transform var(--t-med) var(--ease-out-quint);
 }
 
 .cta:hover,
 .cta:focus-visible {
-  border-color: var(--cyan);
-  background-color: rgba(79, 216, 255, 0.1);
-  color: #eafbff;
-  box-shadow:
-    inset 0 0 0 1px rgba(79, 216, 255, 0.15),
-    0 14px 44px -14px rgba(79, 216, 255, 0.6);
-  transform: translateY(-2px);
+  color: #05060f;
+  border-color: transparent;
+}
+
+.cta:hover::before,
+.cta:focus-visible::before {
+  transform: scaleX(1);
 }
 
 .cta:focus-visible {
-  outline: 2px solid var(--cyan);
-  outline-offset: 4px;
-}
-
-.cta:active {
-  transform: translateY(0);
+  outline: 1px solid var(--cyan);
+  outline-offset: 3px;
 }
 
 .cta-arrow {
   font-family: var(--font-mono);
-  transition: transform 0.25s ease;
+  transition: transform var(--t-med) var(--ease-out-quint);
 }
 
 .cta:hover .cta-arrow,
 .cta:focus-visible .cta-arrow {
-  transform: translateX(5px);
+  transform: translateX(6px);
 }
 
 /* ------------------------------------------------------------------ HUD */
@@ -1445,21 +1483,421 @@ body.mode-gallery #quality {
   box-shadow: inset 0 0 0 1px rgba(79, 216, 255, 0.28);
 }
 
-/* --------------------------------------------------- モード遷移の暗転 */
+/* ============================================================ COMPONENTS
+   ここから下は src/ui/components/*.ts が生成する DOM のスタイル。
+   値はすべて tokens.css のトークンを参照する。
+   ========================================================================= */
 
-#mode-fade {
-  position: fixed;
-  inset: 0;
-  z-index: 6;
-  background: #03040a;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 250ms ease;
+/* ------------------------------------------------- SplitText(行 / 文字)
+
+   マスク(.sp-line / .sp-char)は動かさない器で、動くのは内側の span だけ。
+   文字マスクだけ padding + 同値の負 margin を持たせているのは、
+   line-height 0.95 のディスプレイ英字でグリフが器から溢れて切れるのを防ぐため
+   (レイアウト上の高さは負 margin で相殺されるので組版は変わらない)。
+*/
+
+/*
+  分割前の文の複製。視覚には出さないが支援技術には届く ──
+  `<p>` は aria-label を持てない(名前禁止のロール)ので、
+  読み上げの経路はこちらが本命になる。
+*/
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
-#mode-fade.is-on {
-  opacity: 1;
+.sp-line {
+  display: block;
+  overflow: hidden;
+}
+
+.sp-line-in {
+  display: block;
+  white-space: nowrap;
+  will-change: transform;
+}
+
+.sp-char {
+  display: inline-block;
+  overflow: hidden;
+  vertical-align: top;
+  padding-block: 0.08em;
+  margin-block: -0.08em;
+}
+
+.sp-char-in {
+  display: block;
+  will-change: transform;
+}
+
+/* --------------------------------------------------------- 流れる帯(序章/終章)
+
+   同一内容を 2 枚並べ、-50% までの平行移動を 60 秒で回す。継ぎ目は構造的に出ない。
+   本文の邪魔をしないよう濃度は 0.14 まで、両端はマスクで空気へ溶かす。
+*/
+
+/*
+  .pin の**パディングボックス**が絶対配置の基準になる ── パディングボックスは
+  ピンの全幅そのものなので、left/right: 0 でちょうど画面幅いっぱいに広がる
+  (ガター分の負値を足すと横スクロールが生まれる)。
+*/
+.mq {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* 画面下辺には HUD(左)と品質チップ(右)が座っている。その上へ逃がす */
+  bottom: clamp(4.2rem, 10vh, 6.5rem);
+  overflow: hidden;
+  pointer-events: none;
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14%, #000 86%, transparent);
+}
+
+.mq-track {
+  display: flex;
+  width: max-content;
+  animation: mq-scroll 60s linear infinite;
+}
+
+.mq[data-paused='true'] .mq-track {
+  animation-play-state: paused;
+}
+
+.mq-half {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.7rem;
+  letter-spacing: 0.35em;
+  line-height: 1;
+  white-space: pre;
+  color: var(--ink);
+  opacity: 0.14;
+}
+
+@keyframes mq-scroll {
+  from {
+    transform: translate3d(0, 0, 0);
+  }
+  to {
+    transform: translate3d(-50%, 0, 0);
+  }
+}
+
+@media (max-width: 560px) {
+  .mq {
+    display: none;
+  }
+}
+
+/* --------------------------------------------------------------- Preloader
+
+   上下 2 枚の無地パネル + その上に載る内容。退出時、パネルは
+   --pl-split(進捗ヘアラインの実測 Y)を境に分かれる ── 線がそのまま開く。
+   分割位置が動いても両パネルは同じ #05060f なので、境界は一度も見えない。
+*/
+
+.pl {
+  --pl-split: 50%;
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-preloader);
+}
+
+.pl-panel {
+  position: absolute;
+  left: 0;
+  right: 0;
+  background: #05060f;
+  will-change: transform;
+}
+
+.pl-panel-top {
+  top: 0;
+  height: var(--pl-split);
+}
+
+/* 1px 重ねてサブピクセルの継ぎ目を潰す */
+.pl-panel-bottom {
+  top: calc(var(--pl-split) - 1px);
+  bottom: 0;
+}
+
+.pl-stack {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--s3);
+  width: fit-content;
+  max-width: 92vw;
+}
+
+.pl-mark {
+  margin: 0 -0.22em 0 0; /* 末尾トラッキングの視覚補正 */
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2rem, 7vw, 4rem);
+  letter-spacing: 0.22em;
+  line-height: 1.15;
+  white-space: nowrap;
+  text-align: center;
+  color: var(--ink);
+}
+
+.pl-rail {
+  position: relative;
+  height: 1px;
+  background: var(--hairline);
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+.pl-fill {
+  position: absolute;
+  inset: 0;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--cyan), var(--violet) 55%, var(--magenta));
+  box-shadow: 0 0 14px rgba(79, 216, 255, 0.35);
+}
+
+.pl-caption {
+  margin: 0;
+  font-family: var(--font-body);
+  font-weight: 400;
+  font-size: 0.62rem;
+  letter-spacing: 0.3em;
+  line-height: 1;
+  color: var(--ink-dim);
+  opacity: 0.75;
+}
+
+.pl-percent {
+  position: absolute;
+  right: clamp(1rem, 3vw, 2.4rem);
+  bottom: clamp(1rem, 3vw, 2.4rem);
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.16em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-dim);
+}
+
+/* 退出が始まったらもう入力を受けない(幕が開くまでのクリックを吸わない) */
+.pl.is-exiting {
+  pointer-events: none;
+}
+
+/* ------------------------------------------------- TransitionOverlay(幕)
+
+   2 枚の幕が下から拭き上げ、その縁を 1px のヘアラインが先導する。
+   ヘアラインは幕の**兄弟**。子にすると scaleY に巻き込まれて 1px が潰れる。
+*/
+
+.tx {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-overlay);
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.tx[data-active='true'] {
+  visibility: visible;
   pointer-events: auto;
+}
+
+.tx-layer {
+  position: absolute;
+  inset: 0;
+  transform: scaleY(0);
+  transform-origin: 50% bottom;
+  will-change: transform;
+}
+
+.tx-l1 {
+  background: #05060f;
+}
+
+.tx-l2 {
+  background: linear-gradient(
+    180deg,
+    rgba(79, 216, 255, 0.12),
+    rgba(157, 107, 255, 0.08) 55%,
+    rgba(5, 6, 15, 0.92)
+  );
+}
+
+/*
+  ヘアラインの「運び屋」は画面いっぱいの箱で、線そのものはその上端に描く。
+  translateY(100%) が**ビューポート高**を意味するようにするための構造 ──
+  1px の要素を直接動かすと 100% が 1px になり、線は一歩も動かない。
+*/
+.tx-edge {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  will-change: transform;
+}
+
+.tx-edge::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan) 20%, var(--magenta) 80%, transparent);
+  box-shadow: 0 0 18px rgba(79, 216, 255, 0.45);
+}
+
+/* reduced-motion: アニメーションを使わずクラスで一瞬に切る */
+.tx.is-cut .tx-layer {
+  transform: scaleY(1);
+}
+
+/* ------------------------------------------------------------- Cursor
+
+   3 要素は body 直下の兄弟。共通の親に z-index を与えると
+   スタッキングコンテキストが分離して実点の difference が背景を見なくなる。
+   JS が書くのは translate だけで、大きさの状態遷移は CSS が持つ。
+*/
+
+.dc {
+  --dc-ring: 1;
+  --dc-dot: 1;
+  --dc-press: 1;
+}
+
+.dc[data-state='hover'] {
+  --dc-ring: 1.45;
+  --dc-dot: 0.5;
+}
+
+.dc[data-state='drag'] {
+  --dc-ring: 2.2;
+  --dc-dot: 0;
+}
+
+.dc[data-down='true'] {
+  --dc-press: 0.85;
+}
+
+.dc-ring,
+.dc-label,
+.dc-dot {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: var(--z-cursor);
+  pointer-events: none;
+  opacity: 0;
+  will-change: transform;
+}
+
+.dc-ring {
+  width: 32px;
+  height: 32px;
+  margin: -16px 0 0 -16px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+  scale: calc(var(--dc-ring) * var(--dc-press));
+  transition:
+    scale var(--t-fast) var(--ease-out-quint),
+    opacity var(--t-fast) linear,
+    border-color var(--t-fast) linear;
+}
+
+.dc-dot {
+  width: 5px;
+  height: 5px;
+  margin: -2.5px 0 0 -2.5px;
+  border-radius: 50%;
+  background: #ffffff;
+  mix-blend-mode: difference;
+  scale: calc(var(--dc-dot) * var(--dc-press));
+  transition:
+    scale var(--t-fast) var(--ease-out-quint),
+    opacity var(--t-fast) linear;
+}
+
+.dc-label {
+  transform: translate(-50%, -50%);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  line-height: 1;
+  white-space: nowrap;
+  color: var(--cyan);
+  transition: opacity var(--t-fast) linear;
+}
+
+.dc[data-visible='true'] .dc-ring,
+.dc[data-visible='true'] .dc-dot {
+  opacity: 1;
+}
+
+.dc[data-visible='true'][data-state='drag'] .dc-label {
+  opacity: 1;
+}
+
+.dc[data-state='drag'] .dc-ring {
+  border-color: rgba(79, 216, 255, 0.5);
+}
+
+/* ネイティブカーソルを消すのは、実際にカーソルが載っているあいだだけ */
+html.has-dimension-cursor,
+html.has-dimension-cursor * {
+  cursor: none !important;
+}
+
+/* ------------------------------------------------------------ 全体の作法 */
+
+/* スクロールバー: 6px の細身。トラックは空気のまま */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+::selection {
+  background: var(--cyan);
+  color: #05060f;
+}
+
+/* フォーカスリングは決して消さない。既定は 1px のシアン、3px の余白 */
+:focus-visible {
+  outline: 1px solid var(--cyan);
+  outline-offset: 3px;
 }
 
 /* ------------------------------------------- ギャラリーのモバイル配置 */
@@ -1656,12 +2094,13 @@ body.mode-gallery #quality {
 
 @media (prefers-reduced-motion: reduce) {
   /*
-    テキストの立ち上がりストロークを止める。overlays.ts 側でも rise=0 にするが、
-    インラインの custom property より作者スタイルの !important が優先されるため
-    JS の状態に依存せず必ず無効化できる。
+    テキストの立ち上がりを止める。component.ts の play() が transform を
+    キーフレームから落とし尺を 0 にするが、JS の状態に依存せず必ず静止するよう
+    作者スタイルの !important でも押さえる(伏せる/出すは opacity が担う)。
   */
-  .chapter-inner {
-    --ty: 0px !important;
+  .sp-line-in,
+  .sp-char-in {
+    transform: none !important;
   }
 
   #narrative {
@@ -1673,15 +2112,15 @@ body.mode-gallery #quality {
     opacity: 0.6;
   }
 
-  .cta,
-  .cta-arrow {
-    transition: none;
+  /* 流れる帯は止める(存在は残す ── 読める飾りであることは変わらない) */
+  .mq-track {
+    animation: none;
   }
 
-  .cta:hover,
-  .cta:focus-visible,
-  .cta:active {
-    transform: none;
+  .cta,
+  .cta::before,
+  .cta-arrow {
+    transition: none;
   }
 
   .cta:hover .cta-arrow,
@@ -1689,11 +2128,21 @@ body.mode-gallery #quality {
     transform: none;
   }
 
+  /* 幕・プリローダの各層。JS 側は待ち時間そのものを 0 にする */
+  .tx-layer,
+  .tx-edge,
+  .pl-panel,
+  .pl-rail,
+  .dc-ring,
+  .dc-dot,
+  .dc-label {
+    transition: none;
+  }
+
   /*
-    ギャラリー側も同じ方針: 暗転は即時、ドロワーとパネルの開閉はスナップ。
+    ギャラリー側も同じ方針: 幕は即時、ドロワーとパネルの開閉はスナップ。
     gallery.ts は待ち時間そのものを 0 にし、カメラのホーム復帰トゥイーンも飛ばす。
   */
-  #mode-fade,
   #gallery-drawer,
   .panel-body,
   .gal-tab,

@@ -22,6 +22,9 @@ import { NarrativeScene } from './scenes/narrative';
 import { PerspectiveExhibit, type CameraHint } from './scenes/perspectiveExhibit';
 import { CHAPTERS, CHAPTER_DIMS } from './ui/content';
 import { Overlays, buildNarrativeDOM } from './ui/overlays';
+import { Preloader } from './ui/components/Preloader';
+import { createCursor } from './ui/components/Cursor';
+import { magnetize } from './ui/components/MagneticButton';
 
 const canvasEl = document.getElementById('gl');
 if (!(canvasEl instanceof HTMLCanvasElement)) {
@@ -30,8 +33,39 @@ if (!(canvasEl instanceof HTMLCanvasElement)) {
 // 明示的に型を確定させる: instanceof の絞り込みは下のクロージャまで届かない
 const canvas: HTMLCanvasElement = canvasEl;
 
+/**
+ * 単独展示のブートパス(開発・回帰検証用)。?exhibit=hopf | clifford | polytope |
+ * perspective で物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。
+ * 生成そのものは gallery.ts の EXHIBIT_REGISTRY を通すので、展示クラスも
+ * カメラのホーム姿勢もギャラリー本線と完全に同一のものが使われる。
+ */
+const exhibitParam = new URLSearchParams(window.location.search).get('exhibit');
+const isStandalone =
+  exhibitParam === 'hopf' ||
+  exhibitParam === 'clifford' ||
+  exhibitParam === 'polytope' ||
+  exhibitParam === 'perspective';
+
+/**
+ * プリローダは **エンジンより先に、同期で** 差し込む。
+ * ここで await を挟むと TTI が伸びるので、DOM を組んで載せるだけ ──
+ * 進捗は fonts.ready と engine.onFirstFrame という**実測の合図**で進む。
+ */
+let onCurtainRise: (() => void) | null = null;
+const preloader = isStandalone
+  ? null
+  : new Preloader({
+      onReveal: () => {
+        onCurtainRise?.();
+        mountChrome();
+      },
+    });
+preloader?.mount(document.body);
+
 const engine = new Engine(canvas);
 const starfield = createStarfield();
+
+if (preloader !== null) engine.onFirstFrame(preloader.signalFirstFrame);
 
 // 星の見かけ大きさは描画バッファ倍率に依存する。resize でも品質ティア適用でも
 // engine が同じ経路で配るので、購読はここ 1 箇所でよい(品質より先に登録する)
@@ -44,13 +78,6 @@ engine.onResize((_width, _height, pixelRatio) => starfield.setPixelRatio(pixelRa
 const quality = new QualityController({ engine, starfield });
 
 /**
- * 単独展示のブートパス(開発・回帰検証用)。?exhibit=hopf | clifford | polytope |
- * perspective で物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。
- * 生成そのものは gallery.ts の EXHIBIT_REGISTRY を通すので、展示クラスも
- * カメラのホーム姿勢もギャラリー本線と完全に同一のものが使われる。
- */
-
-/**
  * カメラ誘導ヒントを無視する時間(ミリ秒)。
  * ユーザーが OrbitControls に触れたら、その操作が終わってから 6 秒は
  * こちらからカメラを動かさない(2 秒の「静止」条件はこれに含まれる)。
@@ -59,8 +86,6 @@ const HINT_PAUSE_MS = 6000;
 /** ヒントへの追従速度(expSmooth)。~0.5 秒で寄る */
 const HINT_RATE = 3.2;
 
-const exhibitParam = new URLSearchParams(window.location.search).get('exhibit');
-
 if (
   exhibitParam === 'hopf' ||
   exhibitParam === 'clifford' ||
@@ -68,8 +93,30 @@ if (
   exhibitParam === 'perspective'
 ) {
   bootStandaloneExhibit(exhibitParam);
+  mountChrome();
 } else {
   bootNarrative();
+}
+
+/**
+ * 計器としてのカーソルと、操作要素の磁力。
+ *
+ * どちらもデスクトップの細いポインタ専用で、reduced-motion や
+ * タッチ端末では自分から何もしない(createCursor は null を返し、
+ * magnetize は何も付けない)。プリローダが幕を割る瞬間に呼ぶ。
+ */
+function mountChrome(): void {
+  createCursor(document.body);
+
+  const cta = document.getElementById('enter-gallery');
+  if (cta instanceof HTMLElement) magnetize(cta, { labelSelector: '.cta-label' });
+
+  for (const pill of document.querySelectorAll<HTMLElement>('#mode-nav .nav-pill')) {
+    magnetize(pill, { radius: 70, max: 6, labelMax: 9, labelSelector: '.nav-jp' });
+  }
+
+  const chip = document.querySelector<HTMLElement>('#quality .q-chip');
+  if (chip !== null) magnetize(chip, { radius: 60, max: 5, labelMax: 7 });
 }
 
 function bootStandaloneExhibit(kind: ExhibitId): void {
@@ -185,8 +232,12 @@ function bootNarrative(): void {
   narrative.scene.add(starfield.group);
   engine.setScene(narrative.scene);
 
-  // 4) テキストオーバーレイ(フェード・HUD・進捗バー・CTA)
+  // 4) テキストオーバーレイ(振り付け・HUD・進捗バー・CTA)
   const overlays = new Overlays({ director: scrollDirector, chapters: CHAPTERS, dom });
+
+  // プリローダが上下パネルを割りはじめた瞬間にテキストの振り付けを始める ──
+  // 開いていく隙間の向こうで、序章がちょうど立ち上がる
+  onCurtainRise = overlays.start;
 
   /**
    * 5) ギャラリーは**初回入場時に初めて構築する**。
@@ -205,8 +256,12 @@ function bootNarrative(): void {
   });
 
   // resize は engine が debounce(150ms)して配る。セクション高は svh 基準なので
-  // アドレスバーの伸縮では変わらないが、回転や幅変更では必ず測り直す(既知の罠 #5)
-  engine.onResize(() => scrollDirector.remeasure());
+  // アドレスバーの伸縮では変わらないが、回転や幅変更では必ず測り直す(既知の罠 #5)。
+  // 行分割は幅に依存するので**先に**組み直し、そのあと章の高さを測る。
+  engine.onResize(() => {
+    overlays.remeasure();
+    scrollDirector.remeasure();
+  });
 
   // モードで駆動対象を丸ごと切り替える。ギャラリー中は scrollDirector も
   // narrative も overlays も一切走らない(プラン3節)
