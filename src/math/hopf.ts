@@ -84,6 +84,46 @@ export function baseLatitudeRings(
 }
 
 /**
+ * S² の緯線リング分布(面積重み付き): リングごとの本数を sinθ に比例させる。
+ *
+ * 等本数のリング(baseLatitudeRings)は θ が小さいリングでファイバーが
+ * ほぼ同一の円に投影されて加算合成が飽和する(白飛び)。S² 上の一様密度は
+ * 緯線周長 = 2π·sinθ に比例するので、本数を sinθ で重み付けするのが
+ * 数学的に正しいサンプリングになる。合計はおおよそ targetTotal に一致する。
+ * out へ [θ,φ,…] を書き、実際に書いた基点数を返す。
+ */
+export function baseLatitudeRingsWeighted(
+  rings: number,
+  targetTotal: number,
+  out: Float64Array,
+  thetaMin = THETA_MIN,
+  thetaMax = THETA_MAX,
+): number {
+  const lo = clampTheta(thetaMin);
+  const hi = clampTheta(thetaMax);
+  const golden = TWO_PI * 0.381966;
+  // 正規化係数: Σ sinθ_r
+  let sinSum = 0;
+  for (let r = 0; r < rings; r++) {
+    const t = rings === 1 ? 0.5 : r / (rings - 1);
+    sinSum += Math.sin(lo + (hi - lo) * t);
+  }
+  let p = 0;
+  for (let r = 0; r < rings; r++) {
+    const t = rings === 1 ? 0.5 : r / (rings - 1);
+    const theta = lo + (hi - lo) * t;
+    const perRing = Math.max(4, Math.round((targetTotal * Math.sin(theta)) / sinSum));
+    const phase = r * golden;
+    for (let k = 0; k < perRing; k++) {
+      out[p * 2] = theta;
+      out[p * 2 + 1] = (k / perRing) * TWO_PI + phase;
+      p++;
+    }
+  }
+  return p;
+}
+
+/**
  * S² の大円分布: 軸を `tilt` だけ傾けた大円上に `count` 点。
  * ファイバーの投影はヴィラルソー円の鎖(絡み合うリンク)になる。
  */

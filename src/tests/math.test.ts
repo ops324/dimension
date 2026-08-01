@@ -12,6 +12,7 @@ import {
   baseFibonacci,
   baseGreatCircle,
   baseLatitudeRings,
+  baseLatitudeRingsWeighted,
   THETA_MAX,
   THETA_MIN,
 } from '../math/hopf';
@@ -213,6 +214,26 @@ describe('hopf', () => {
       expect(hy).toBeCloseTo(expected[1], 12);
       expect(hz).toBeCloseTo(expected[2], 12);
     }
+  });
+
+  it('面積重み付きリング分布は sinθ に比例した本数を割り当てる', () => {
+    const out = new Float64Array(4000);
+    const count = baseLatitudeRingsWeighted(25, 600, out);
+    // 合計はおおよそ target(丸めで ±rings 程度ずれる)
+    expect(count).toBeGreaterThan(560);
+    expect(count).toBeLessThan(640);
+    // リングごとの本数を集計し、中央(θ≈π/2)のリングが端のリングより多いこと
+    const perTheta = new Map<number, number>();
+    for (let k = 0; k < count; k++) {
+      const theta = out[k * 2];
+      perTheta.set(theta, (perTheta.get(theta) ?? 0) + 1);
+      expect(theta).toBeGreaterThanOrEqual(THETA_MIN - 1e-12);
+      expect(theta).toBeLessThanOrEqual(THETA_MAX + 1e-12);
+    }
+    const thetas = [...perTheta.keys()].sort((a, b) => a - b);
+    const first = perTheta.get(thetas[0])!;
+    const middle = perTheta.get(thetas[(thetas.length / 2) | 0])!;
+    expect(middle).toBeGreaterThan(first * 2);
   });
 
   it('基点分布は個数を返し θ を安全範囲に収める', () => {
