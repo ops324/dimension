@@ -71,6 +71,11 @@ export class Engine {
   private readonly frameCallbacks: FrameCallback[] = [];
   private readonly resizeCallbacks: ResizeCallback[] = [];
   private readonly afterRenderCallbacks: AfterRenderCallback[] = [];
+  /**
+   * 「最初の 1 枚を描き終えた」通知の待ち行列。発火後は null になり、
+   * 以降の onFirstFrame() は即時に呼び返す(プリローダの進捗が実測である根拠)。
+   */
+  private firstFrameCallbacks: (() => void)[] | null = [];
   private readonly lineMaterials: ResolutionTrackingMaterial[] = [];
   /** 毎フレーム/リサイズで使い回す作業用ベクタ(ループ内アロケーション禁止) */
   private readonly bufferSize = new THREE.Vector2();
@@ -174,6 +179,18 @@ export class Engine {
   }
 
   /**
+   * 最初のフレームを描き終えた瞬間に一度だけ呼ぶ。
+   * すでに描画済みなら同期で即座に呼び返す(登録の遅れで取りこぼさない)。
+   */
+  onFirstFrame(cb: () => void): void {
+    if (this.firstFrameCallbacks === null) {
+      cb();
+      return;
+    }
+    this.firstFrameCallbacks.push(cb);
+  }
+
+  /**
    * LineMaterial 等、resolution を描画バッファに追従させる必要のあるマテリアルを登録。
    * resize 時の更新漏れは既知の罠 #3 なので、必ずここへ集約する。
    */
@@ -217,6 +234,13 @@ export class Engine {
     const afterRender = this.afterRenderCallbacks;
     for (let i = 0; i < afterRender.length; i++) {
       afterRender[i](this.renderer);
+    }
+
+    // 初回のみ: 絵が出た事実を通知して待ち行列を捨てる(以後この分岐は 1 回の null 比較)
+    const first = this.firstFrameCallbacks;
+    if (first !== null) {
+      this.firstFrameCallbacks = null;
+      for (let i = 0; i < first.length; i++) first[i]();
     }
   };
 

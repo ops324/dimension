@@ -11,6 +11,7 @@ import { CliffordExhibit } from '../scenes/cliffordExhibit';
 import { PolytopeExhibit } from '../scenes/polytopeExhibit';
 import { PerspectiveExhibit, type CameraHint } from '../scenes/perspectiveExhibit';
 import { EXHIBIT_INFO, type ExhibitInfo } from '../ui/content';
+import { TransitionOverlay } from '../ui/components/TransitionOverlay';
 
 /**
  * ギャラリーのモード状態機械(プラン3節)。
@@ -89,8 +90,6 @@ export interface GalleryOptions {
   readonly scrollDirector: ScrollDirector;
 }
 
-/** モード遷移のフェード(ms)。prefers-reduced-motion では 0 になる */
-const FADE_MS = 250;
 /** タブ切替の reveal フェードアウト待ち(ms)。展示側の REVEAL_RATE と噛み合う値 */
 const SWITCH_MS = 380;
 /** カメラのホーム復帰トゥイーン(ms)と追従レート */
@@ -119,7 +118,8 @@ export class Gallery {
   private readonly rootEl: HTMLElement;
   private readonly tabsEl: HTMLElement;
   private readonly panelRoot: HTMLElement;
-  private readonly fadeEl: HTMLElement;
+  /** モード遷移の幕(Phase 9a で #mode-fade の単純な暗転から置き換え) */
+  private readonly transition = new TransitionOverlay();
   private readonly drawerEl: HTMLElement;
   private readonly drawerTitleEl: HTMLElement;
   private readonly drawerBodyEl: HTMLElement;
@@ -139,7 +139,6 @@ export class Gallery {
   private savedScrollY = 0;
   private busy = false;
   private switchTimer = 0;
-  private fadeTimer = 0;
   private reduceMotion = false;
 
   /** カメラトゥイーン(毎フレームのアロケーションを避けるため使い回す) */
@@ -161,7 +160,7 @@ export class Gallery {
     this.rootEl = requireEl('gallery');
     this.tabsEl = requireEl('gallery-tabs');
     this.panelRoot = requireEl('gallery-panel');
-    this.fadeEl = requireEl('mode-fade');
+    this.transition.mount(document.body);
     this.drawerEl = requireEl('gallery-drawer');
     this.drawerTitleEl = requireEl('drawer-title');
     this.drawerBodyEl = requireEl('drawer-body');
@@ -451,23 +450,21 @@ export class Gallery {
   // --- 内部: 遷移の部品 ------------------------------------------------------
 
   /**
-   * フェードオーバーレイ。reduced-motion では transition が無効なので、
-   * 待ち時間も 0 にして「即座に切り替わる」挙動へ揃える。
+   * モード遷移の幕(TransitionOverlay)。
+   *
+   * `fade(true, done)` は「幕が覆い切った瞬間に done を呼ぶ」── 旧 #mode-fade と
+   * 同じ契約なので、呼び出し側(enterGallery / exitGallery)は変わらない。
+   * done の中で展示を差し替えて enter() すると、その reveal は幕が上がっていく
+   * あいだに進む ── 幕と絵の立ち上がりが噛み合う。
+   * reduced-motion では TransitionOverlay 側がアニメーションを使わず一瞬で切る。
    */
   private fade(on: boolean, done?: () => void): void {
-    if (this.fadeTimer !== 0) {
-      window.clearTimeout(this.fadeTimer);
-      this.fadeTimer = 0;
+    if (on) {
+      void this.transition.cover().then(() => done?.());
+      return;
     }
-    this.fadeEl.classList.toggle('is-on', on);
-    if (done === undefined) return;
-    this.fadeTimer = window.setTimeout(
-      () => {
-        this.fadeTimer = 0;
-        done();
-      },
-      this.reduceMotion ? 0 : FADE_MS,
-    );
+    void this.transition.uncover();
+    done?.();
   }
 
   /** カメラのホーム姿勢と距離制限を適用する。instant=true は暗転中の即時適用 */

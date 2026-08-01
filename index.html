@@ -128,8 +128,11 @@
     -->
     <div id="quality"></div>
 
-    <!-- モード遷移の暗転(250ms)。reduced-motion では transition を無効化する -->
-    <div id="mode-fade" aria-hidden="true"></div>
+    <!--
+      モード遷移の幕は src/ui/components/TransitionOverlay.ts が自分で生成する
+      (Phase 9a で #mode-fade の単純な暗転から置き換え)。プリローダとカーソルも
+      同様に main.ts がコンポーネントとして差し込むので、ここには器を置かない。
+    -->
 
     <script type="module" src="/src/main.ts"></script>
   </body>

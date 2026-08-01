@@ -1,0 +1,45 @@
+/* DIMENSION — デザイントークン(Phase 9a)
+
+   ここが「動きと余白の一次情報源」。style.css の先頭で import され、
+   コンポーネント(src/ui/components/*.ts)は WAAPI から同じ値を参照する
+   ── TS 側の写しは component.ts の EASE / DUR にある。**片方だけ変えないこと**。
+
+   イージングはこの作品の人格そのもの:
+     out-expo  … 立ち上がり。速く出て、長く静止へ寄る(テキストの reveal)
+     out-quint … 弾性のない反発。マグネットの戻り・グラデーションの掃き
+     inout-soft… 幕。両端が静かで、途中だけが速い(パネル分割・遷移)
+*/
+
+:root {
+  /* easing — the personality of the whole site */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-quint: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-inout-soft: cubic-bezier(0.65, 0, 0.35, 1);
+  /* durations */
+  --t-fast: 180ms;
+  --t-med: 420ms;
+  --t-slow: 800ms;
+  --t-reveal: 1100ms;
+  /* hairlines & surfaces */
+  --hairline: rgba(255, 255, 255, 0.08);
+  --hairline-strong: rgba(255, 255, 255, 0.16);
+  --surface: rgba(10, 12, 24, 0.55);
+  --surface-deep: rgba(7, 8, 18, 0.78);
+  /* spacing scale (8px base) & z-scale */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 16px;
+  --s4: 24px;
+  --s5: 40px;
+  --s6: 64px;
+  --s7: 104px;
+  --z-canvas: 0;
+  --z-content: 10;
+  --z-hud: 40;
+  --z-nav: 50;
+  --z-overlay: 80;
+  --z-cursor: 100;
+
+  /* 追加: プリローダは遷移オーバーレイより上・カーソルより下に単独で座る */
+  --z-preloader: 90;
+}
