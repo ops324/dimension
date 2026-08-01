@@ -79,6 +79,19 @@ const LINE_EPSILON = 3;
 
 /* ------------------------------------------------------------------ 文字分割 */
 
+export interface SplitCharsOptions {
+  /**
+   * 語(空白で区切られた塊)を折り返しの単位に保つ。
+   *
+   * 1 文字ずつのマスクは inline-block の原子的インラインなので、行分割の
+   * アルゴリズムは**文字と文字のあいだでも改行してよい**と判断する。
+   * 1 語の見出し(9a の `.ch-en`)では起こり得なかったが、2 語以上の
+   * 展示名(HOPF FIBRATION)では語の途中で折れてしまう。
+   * true にすると語ごとに nowrap の器で包み、改行は空白の位置だけに戻る。
+   */
+  readonly keepWords?: boolean;
+}
+
 /**
  * 表示英字(ディスプレイワード)を 1 文字ずつマスクで包む。
  *
@@ -87,16 +100,20 @@ const LINE_EPSILON = 3;
  * 幅ぶんに引き伸ばしたグラデーションを x オフセット付きで再構成**して貼り直し、
  * 見た目の連続性を保ったまま 1 文字ずつ動かせるようにする。
  */
-export function splitChars(el: HTMLElement): SplitHandle {
+export function splitChars(el: HTMLElement, options: SplitCharsOptions = {}): SplitHandle {
   const original = el.textContent ?? '';
   const gradient = readGradient(el);
+  const keepWords = options.keepWords === true;
 
   const parts: HTMLElement[] = [];
   const fragment = document.createDocumentFragment();
+  /** keepWords のときだけ使う、いま組み立て中の語の器 */
+  let word: HTMLElement | null = null;
 
   for (const char of Array.from(original)) {
     if (char.trim() === '') {
       // 空白はマスクに包まない(inline-block 化すると幅が変わる)
+      word = null;
       fragment.append(document.createTextNode(char));
       continue;
     }
@@ -107,7 +124,18 @@ export function splitChars(el: HTMLElement): SplitHandle {
     inner.className = 'sp-char-in';
     inner.textContent = char;
     mask.append(inner);
-    fragment.append(mask);
+
+    if (keepWords) {
+      if (word === null) {
+        word = document.createElement('span');
+        word.className = 'sp-word';
+        word.setAttribute('aria-hidden', 'true');
+        fragment.append(word);
+      }
+      word.append(mask);
+    } else {
+      fragment.append(mask);
+    }
     parts.push(inner);
   }
 

@@ -2,6 +2,7 @@ import { Vector2 } from 'three';
 
 import type { Engine } from './engine';
 import type { Starfield } from '../render/starfield';
+import { createSlidingPill, type SlidingPill } from '../ui/components/controls/Segmented';
 
 /**
  * 品質ティアと AUTO 制御(プラン5節「AUTO品質制御」/ 既知の罠 #12)。
@@ -95,6 +96,8 @@ export class QualityController {
   private readonly chipEl: HTMLButtonElement;
   private readonly readoutEl: HTMLElement;
   private readonly optionEls = new Map<QualityMode, HTMLButtonElement>();
+  /** 選択中を示す滑るピル(Segmented と同じ 1 本のコードを共有する) */
+  private readonly pill: SlidingPill;
 
   constructor(options: QualityOptions) {
     this.engine = options.engine;
@@ -104,6 +107,7 @@ export class QualityController {
     this.rootEl = ui.root;
     this.chipEl = ui.chip;
     this.readoutEl = ui.readout;
+    this.pill = ui.pill;
 
     // 起動ティアを明示的に一度流す(engine の初期値と同じでも、ブルーム倍率と
     // 星密度、そして drawingBuffer のログをここで確定させたい)
@@ -254,7 +258,12 @@ export class QualityController {
 
   // --- UI --------------------------------------------------------------------
 
-  private buildUI(): { root: HTMLElement; chip: HTMLButtonElement; readout: HTMLElement } {
+  private buildUI(): {
+    root: HTMLElement;
+    chip: HTMLButtonElement;
+    readout: HTMLElement;
+    pill: SlidingPill;
+  } {
     let root = document.getElementById('quality');
     if (!(root instanceof HTMLElement)) {
       root = document.createElement('div');
@@ -270,11 +279,15 @@ export class QualityController {
     const opts = document.createElement('div');
     opts.className = 'q-opts';
     opts.id = 'quality-menu';
+    // 選択の表現はパネルの segmented と同じ「滑るピル」。畳んでいるあいだは
+    // 幅が測れないので、開いた瞬間に moveTo(animate=false) で置き直す
+    const pill = createSlidingPill(opts, { className: 'q-pill', matchY: true });
     for (const mode of MODES) {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'q-opt';
       button.textContent = mode;
+      button.dataset.cursor = '';
       button.setAttribute('aria-pressed', mode === this.mode ? 'true' : 'false');
       button.addEventListener('click', () => {
         this.setMode(mode);
@@ -304,13 +317,17 @@ export class QualityController {
       this.setOpen(false);
     });
 
-    return { root, chip, readout };
+    return { root, chip, readout, pill };
   }
 
   private setOpen(open: boolean): void {
     this.rootEl.dataset.open = open ? 'true' : 'false';
     this.chipEl.setAttribute('aria-expanded', open ? 'true' : 'false');
-    if (open) this.refreshReadout();
+    if (open) {
+      this.refreshReadout();
+      // display が付いた直後 = ここではじめて選択肢の幅が測れる
+      this.pill.moveTo(this.optionEls.get(this.mode) ?? null, false);
+    }
   }
 
   private refreshChip(): void {
@@ -319,11 +336,14 @@ export class QualityController {
       this.lastChipLabel = label;
       this.chipEl.textContent = label;
     }
+    let active: HTMLButtonElement | null = null;
     for (const [mode, button] of this.optionEls) {
-      const active = mode === this.mode;
-      button.classList.toggle('is-active', active);
-      button.setAttribute('aria-pressed', active ? 'true' : 'false');
+      const on = mode === this.mode;
+      button.classList.toggle('is-active', on);
+      button.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (on) active = button;
     }
+    this.pill.moveTo(active, true);
   }
 
   /** 実効解像度の表示。**変化したときだけ** DOM へ書く */
