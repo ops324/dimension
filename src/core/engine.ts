@@ -89,6 +89,9 @@ export class Engine {
   private contextLost = false;
   /** devicePixelRatio の上限。品質ティア(quality.ts)が唯一の書き手 */
   private dprCap = BOOT_DPR_CAP;
+  /** UI が覆っている帯の厚み(CSS px)。gallery.ts が唯一の書き手 */
+  private safeTop = 0;
+  private safeBottom = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -157,6 +160,37 @@ export class Engine {
     this.applyResize();
   }
 
+  /**
+   * セーフエリアの通知(Phase 11)。UI が画面の上下を覆っている厚みを CSS px で渡すと、
+   * **空いている帯の中央へ被写体が来るように**構図を持ち上げ下げする。
+   *
+   * 実装は camera.setViewOffset() ── フル解像度の視錐台の「窓」をずらすだけなので、
+   * 描画コストもアロケーションもゼロで、毎フレームの経路には一切触れない。
+   *
+   * 符号(ブラウザで実測して確定):
+   *   three の PerspectiveCamera.updateProjectionMatrix() は
+   *   `top -= view.offsetY * height / fullHeight` として窓を**下へ**滑らせる。
+   *   窓が下がる = 被写体は画面の**上**へ寄る。よってボトムシートで下が塞がる
+   *   (safeBottom > safeTop)ときは offsetY を**正**にするのが正解で、
+   *   offsetY = (safeBottom − safeTop) / 2 をそのまま渡す(符号反転はしない)。
+   */
+  setSafeArea(topPx: number, bottomPx: number): void {
+    const top = topPx > 0 ? topPx : 0;
+    const bottom = bottomPx > 0 ? bottomPx : 0;
+    if (top === this.safeTop && bottom === this.safeBottom) return;
+    this.safeTop = top;
+    this.safeBottom = bottom;
+    this.applySafeArea();
+  }
+
+  /** セーフエリアの解除(物語モード・没入モード・デスクトップ幅) */
+  clearSafeArea(): void {
+    if (this.safeTop === 0 && this.safeBottom === 0) return;
+    this.safeTop = 0;
+    this.safeBottom = 0;
+    this.applySafeArea();
+  }
+
   /** 実効の描画バッファサイズを out へ書き込む(品質セレクタの表示用) */
   getDrawingBufferSize(out: THREE.Vector2): THREE.Vector2 {
     return this.renderer.getDrawingBufferSize(out);
@@ -193,6 +227,11 @@ export class Engine {
   /**
    * LineMaterial 等、resolution を描画バッファに追従させる必要のあるマテリアルを登録。
    * resize 時の更新漏れは既知の罠 #3 なので、必ずここへ集約する。
+   *
+   * 注: three r185 の LineSegments2.onBeforeRender が毎フレーム
+   * material.resolution を描画バッファサイズで上書きするため、実行時の値の
+   * 所有者は three 側にある。この登録は「初期値の保証」と、three の実装が
+   * 変わったときの保険として残している(害はない)。
    */
   registerLineMaterial(material: ResolutionTrackingMaterial): void {
     this.lineMaterials.push(material);
@@ -262,6 +301,8 @@ export class Engine {
 
     this.camera.aspect = width / height;
     this.camera.updateProjectionMatrix();
+    // setViewOffset は fullWidth/fullHeight を握るので、寸法が変わったら必ず貼り直す
+    this.applySafeArea();
 
     this.postfx.setSize(width, height, pixelRatio);
 
@@ -273,6 +314,22 @@ export class Engine {
     for (let i = 0; i < this.resizeCallbacks.length; i++) {
       this.resizeCallbacks[i](width, height, pixelRatio);
     }
+  };
+
+  /**
+   * セーフエリアを投影行列へ反映する。呼ばれるのは setSafeArea / clearSafeArea /
+   * リサイズの 3 経路だけ ── 毎フレームのコストはゼロ。
+   */
+  private readonly applySafeArea = (): void => {
+    const camera = this.camera;
+    if (this.safeTop === 0 && this.safeBottom === 0) {
+      camera.clearViewOffset();
+      return;
+    }
+    const width = Engine.viewportWidth();
+    const height = Engine.viewportHeight();
+    const offsetY = (this.safeBottom - this.safeTop) / 2;
+    camera.setViewOffset(width, height, 0, offsetY, width, height);
   };
 
   private readonly handleContextLost = (event: Event): void => {

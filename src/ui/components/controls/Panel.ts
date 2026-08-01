@@ -17,9 +17,15 @@
  * 開閉状態を **root(呼び出し側が持つ永続コンテナ)** に置くのは Phase 7 から
  * 変わらない: パネル本体はタブ切替のたびに作り直されるので、作り直されない側に
  * 状態を持たせる。
+ *
+ * Phase 11 で 1 つだけ責務が増えた: **シートの実際の可視高さを --sheet-h として
+ * <html> へ公開する**。それまで計器のピルは「46svh」という定数でシートを避けて
+ * いたが、折り畳んだシート(つまみ + 見出しだけ ≒ 3.5rem)のときは画面の
+ * 4 割以上が無駄に空き、逆に展開時は足りないことがあった。高さは
+ * getBoundingClientRect で実測し、開閉とリサイズのときだけ書く。
  */
 
-import { h, type Component } from '../component';
+import { h, SHEET_LAYOUT_QUERY, type Component } from '../component';
 import { createSlider, type SliderControl, type SliderSpec } from './Slider';
 import { createSegmented, type SegmentedControl, type SegmentedSpec } from './Segmented';
 import { createToggle, type ToggleControl, type ToggleSpec } from './Toggle';
@@ -63,6 +69,13 @@ export interface PanelBuilder {
  */
 const LIVE = new WeakMap<HTMLElement, Panel>();
 
+/** シート開閉アニメーション(.panel-body の max-height 0.3s)の完了待ち(ms) */
+const SHEET_SETTLE_MS = 340;
+/** リサイズの間引き。engine と同じ 150ms に揃える(既知の罠 #5) */
+const RESIZE_DEBOUNCE_MS = 150;
+/** --sheet-h の折り畳み時の既定(CSS 側の fallback と同じ値) */
+const SHEET_FALLBACK = '3.5rem';
+
 class Panel implements PanelBuilder, Component {
   readonly root: HTMLElement;
   readonly element: HTMLElement;
@@ -71,10 +84,15 @@ class Panel implements PanelBuilder, Component {
     return this.element;
   }
 
+  private readonly head: HTMLElement;
   private readonly body: HTMLElement;
   private readonly grab: HTMLButtonElement;
   private readonly keyed = new Map<string, PanelControl>();
   private readonly all: Component[] = [];
+  /** シートの実測。展開時の高さは一度測れば以後は即座に確定できる */
+  private lastExpanded = 0;
+  private settleTimer = 0;
+  private resizeTimer = 0;
 
   constructor(root: HTMLElement, title: string) {
     this.root = root;
@@ -104,6 +122,7 @@ class Panel implements PanelBuilder, Component {
     );
 
     head.append(kicker, h('h3', 'panel-title', { text: title }), this.grab);
+    this.head = head;
 
     this.body = h('div', 'panel-body');
     panel.append(head, this.body);
@@ -113,6 +132,21 @@ class Panel implements PanelBuilder, Component {
 
     LIVE.get(root)?.destroy();
     LIVE.set(root, this);
+
+    // 開閉アニメーションが本当に終わった瞬間 ── 尺の見積もりではなく事実で測る。
+    // reduced-motion では遷移そのものが無くこのイベントは来ないが、その場合は
+    // 折り畳み直後の即時実測がそのまま終値になっている。
+    this.body.addEventListener('transitionend', this.onBodyTransitionEnd);
+    window.addEventListener('resize', this.onResize);
+
+    // 初期値の配布は**マイクロタスクへ 1 段遅らせる**。展示の buildPanel は
+    // `createPanel(root, title).slider(…).segmented(…)` と鎖で書くので、
+    // コンストラクタの時点では本体がまだ空 ── ここで測ると「見出しだけの高さ」を
+    // 展開時の高さとして配ってしまう(タブ切替で実測した不具合)。
+    // マイクロタスクは同期の組み立てが終わった直後に走るので、測るのは完成品になる。
+    queueMicrotask(() => {
+      if (LIVE.get(this.root) === this) this.publishSheetHeight(true);
+    });
   }
 
   slider(spec: SliderSpec): PanelBuilder {
@@ -179,6 +213,10 @@ class Panel implements PanelBuilder, Component {
 
   destroy(): void {
     this.grab.removeEventListener('click', this.onGrab);
+    this.body.removeEventListener('transitionend', this.onBodyTransitionEnd);
+    window.removeEventListener('resize', this.onResize);
+    if (this.settleTimer !== 0) window.clearTimeout(this.settleTimer);
+    if (this.resizeTimer !== 0) window.clearTimeout(this.resizeTimer);
     for (let i = 0; i < this.all.length; i++) this.all[i].destroy();
     this.all.length = 0;
     this.keyed.clear();
@@ -191,7 +229,67 @@ class Panel implements PanelBuilder, Component {
   private readonly onGrab = (): void => {
     const collapsed = this.root.classList.toggle('is-collapsed');
     this.grab.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    // 折り畳みの終値は「つまみ + 見出し」の高さで**遷移を待たずに確定できる**ので
+    // 即座に配り、展開側は 340ms 後の実測で仕上げる(初回だけ遅れる)
+    this.publishSheetHeight();
+    if (this.settleTimer !== 0) window.clearTimeout(this.settleTimer);
+    this.settleTimer = window.setTimeout(this.onSettled, SHEET_SETTLE_MS);
   };
+
+  private readonly onSettled = (): void => {
+    this.settleTimer = 0;
+    this.publishSheetHeight(true);
+  };
+
+  /** max-height の遷移が終わった = シートの高さが確定した */
+  private readonly onBodyTransitionEnd = (event: TransitionEvent): void => {
+    if (event.propertyName !== 'max-height' || event.target !== this.body) return;
+    this.publishSheetHeight(true);
+  };
+
+  private readonly onResize = (): void => {
+    if (this.resizeTimer !== 0) window.clearTimeout(this.resizeTimer);
+    this.resizeTimer = window.setTimeout(this.onResizeSettled, RESIZE_DEBOUNCE_MS);
+  };
+
+  private readonly onResizeSettled = (): void => {
+    this.resizeTimer = 0;
+    this.lastExpanded = 0; // 幅が変われば展開時の高さも変わる
+    this.publishSheetHeight(true);
+  };
+
+  /**
+   * シートの可視高さを --sheet-h(<html>)と `dimension:sheet` イベントで配る。
+   *
+   * ボトムシート版レイアウトでないときは property を消す ── CSS 側の
+   * `var(--sheet-h, …)` が既定へ戻り、デスクトップの側面ドックの高さが
+   * うっかりモバイル用の算術へ流れ込むことがない。
+   *
+   * @param settled 遷移が終わっている前提で root を実測してよいか
+   */
+  private publishSheetHeight(settled = false): void {
+    const root = document.documentElement;
+    if (!window.matchMedia?.(SHEET_LAYOUT_QUERY).matches) {
+      root.style.removeProperty('--sheet-h');
+      emitSheetHeight(0);
+      return;
+    }
+
+    const collapsed = this.root.classList.contains('is-collapsed');
+    let height: number;
+    if (collapsed) {
+      // 畳んだシートの高さ = ヘッダ(つまみ)だけ。本体の遷移とは無関係に確定する
+      height = this.head.getBoundingClientRect().height;
+    } else if (settled || this.lastExpanded === 0) {
+      height = this.root.getBoundingClientRect().height;
+      if (settled) this.lastExpanded = height;
+    } else {
+      height = this.lastExpanded;
+    }
+
+    root.style.setProperty('--sheet-h', height > 0 ? `${height.toFixed(1)}px` : SHEET_FALLBACK);
+    emitSheetHeight(height);
+  }
 
   private add(control: PanelControl, key: string | undefined): PanelBuilder {
     this.body.append(control.el);
@@ -210,4 +308,18 @@ class Panel implements PanelBuilder, Component {
  */
 export function createPanel(root: HTMLElement, title: string): PanelBuilder {
   return new Panel(root, title);
+}
+
+/** 同じ値の連投で購読側(gallery のセーフエリア)を無駄に起こさない */
+let lastEmitted = -1;
+
+/**
+ * シート高の通知。誰も聞いていなくても成立する ── CSS は --sheet-h を直接読み、
+ * この合図は「構図をずらす側(gallery → engine.setSafeArea)」のためだけにある。
+ */
+function emitSheetHeight(height: number): void {
+  const rounded = Math.round(height);
+  if (rounded === lastEmitted) return;
+  lastEmitted = rounded;
+  window.dispatchEvent(new CustomEvent<number>('dimension:sheet', { detail: rounded }));
 }

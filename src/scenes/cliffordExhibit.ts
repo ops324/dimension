@@ -42,9 +42,10 @@ const PAL_V_END = 0.95;
 /**
  * 白飛びしない基礎輝度(既知の罠 #6)。トーラス面上の格子は Hopf 束ほど
  * 視線方向に積み上がらない(1 本の視線が横切るのは概ね数本)ので、Hopf の
- * 0.21 より強めに取れる。
+ * 0.25 より強めに取れる。
+ * Phase 11: 0.30 → 0.33(ブルーム減量ぶんのピークを線そのもので取り戻す)。
  */
-const BASE_BRIGHTNESS = 0.3;
+const BASE_BRIGHTNESS = 0.33;
 /** この本数を基準に、増やしたぶんだけ族ごとに減光する */
 const DENSITY_REFERENCE = 48;
 const DENSITY_EXPONENT = 0.7;
@@ -122,8 +123,9 @@ export class CliffordExhibit implements Exhibit {
     this.scene = new THREE.Scene();
     this.scene.name = 'cliffordScene';
     // 黒への指数フォグ = 加算合成における距離減衰。極へ近づいて遠方へ伸びた
-    // 部分を自然に減衰させ、手前の格子が読めるようにする
-    this.scene.fog = new THREE.FogExp2(0x000000, 0.08);
+    // 部分を自然に減衰させ、手前の格子が読めるようにする。
+    // Phase 11: 0.08 → 0.10(遠方をブルームへ入る前に落とす = veil 対策)
+    this.scene.fog = new THREE.FogExp2(0x000000, 0.1);
     this.group.name = 'clifford';
     this.scene.add(this.group);
 

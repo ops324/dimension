@@ -35,19 +35,33 @@ export interface PostFX {
 }
 
 const DEFAULT_SAMPLES = 4;
-const DEFAULT_BLOOM_STRENGTH = 0.95;
-const DEFAULT_BLOOM_RADIUS = 0.4;
-const DEFAULT_BLOOM_THRESHOLD = 0.1;
+/**
+ * ブルーム(Phase 11 で再調律)。
+ *
+ * Phase 8 までの既定は strength 0.95 / radius 0.4 / **threshold 0.1** で、
+ * 監査の実測ではこの閾値が「veil(薄い膜)」の支配的な発生源だった:
+ * 線の芯だけでなく、加算合成で持ち上がった**背景側の裾**まで丸ごと閾値を超え、
+ * 画面全体に低周波のにじみが敷かれていた。閾値を 0.28 へ上げると裾が落ち、
+ * 線の断面コントラスト (peak−floor)/floor が 4〜7 倍に改善する。
+ * strength と radius も下げるが、**光の性格は変えない** ── 実測で FWHM
+ * (にじみの半値幅)は据え置き、グローは芯の周りにだけ残る。
+ * これらは測定して決めた値なので「改善」しないこと。
+ */
+const DEFAULT_BLOOM_STRENGTH = 0.4;
+const DEFAULT_BLOOM_RADIUS = 0.25;
+const DEFAULT_BLOOM_THRESHOLD = 0.28;
 
 /**
- * グレードの既定強度。
- *   x: ビネット深度   — 隅で ×0.82(1 - 0.21 * 0.844)。「穴」ではなく空気として読める深さ
- *   y: グレイン振幅   — 表示値のピーク間 0.035(≒ ±4.5/255)
- *   z: 色収差         — 画面隅での放射オフセット(描画バッファ px)
+ * グレードの既定強度(Phase 11 で再調律)。
+ *   x: ビネット深度   — 隅で ×0.85(1 - 0.18 * 0.844)。「穴」ではなく空気として読める深さ
+ *   y: グレイン振幅   — 表示値のピーク間 0.015(≒ ±1.9/255)。0.035 は暗部の
+ *                       線と同じ振幅を持ち、細線の輪郭を濁らせていた(監査実測)
+ *   z: 色収差         — 画面隅での放射オフセット(描画バッファ px)。1.2px は
+ *                       線幅 1.7〜2.6px に対して大きすぎ、二重像として読めた
  */
-const GRADE_VIGNETTE = 0.21;
-const GRADE_GRAIN = 0.035;
-const GRADE_ABERRATION = 1.2;
+const GRADE_VIGNETTE = 0.18;
+const GRADE_GRAIN = 0.015;
+const GRADE_ABERRATION = 0.4;
 
 const GRADE_VERTEX_SHADER = /* glsl */ `
 varying vec2 vUv;

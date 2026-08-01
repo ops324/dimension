@@ -51,6 +51,15 @@
   --pill-h: 34px;
   /* 計器を縦に積むときの 1 段ぶん(ピル 1 個 + 隙間)。柱の算術はこれ 1 本で書く */
   --hud-stack: calc(var(--pill-h) + var(--s2));
+
+  /* ギャラリーの骨格寸法(Phase 11 で #gallery から :root へ引き上げた)。
+     #gallery の外に立つ要素 ── 没入チップ・神視点インセット ── も同じ骨格に
+     揃える必要があるため、継承の届く場所へ置く。値そのものは変えていない。 */
+  --gal-gutter: clamp(1.1rem, 3.4vw, 3rem);
+  --gal-top: clamp(1rem, 2.6vh, 1.8rem);
+  --gal-panel-w: min(21rem, 30vw);
+  /* タブ帯の高さ + 余白。ヘッダとパネルの上端を揃える基準 */
+  --gal-shelf: 4.9rem;
 }
 
 *,
@@ -647,17 +656,13 @@ body.mode-gallery #perspective-caption {
   max-width: min(36ch, calc(100vw - 3rem));
 }
 
+/* 骨格寸法(--gal-*)は :root が持つ。#gallery の外に立つ没入チップと
+   神視点インセットも同じ骨格へ揃えるため(Phase 11) */
 #gallery {
   position: fixed;
   inset: 0;
   z-index: 4;
   pointer-events: none;
-
-  --gal-gutter: clamp(1.1rem, 3.4vw, 3rem);
-  --gal-top: clamp(1rem, 2.6vh, 1.8rem);
-  --gal-panel-w: min(21rem, 30vw);
-  /* タブ帯の高さ + 余白。ヘッダとパネルの上端を揃える基準 */
-  --gal-shelf: 4.9rem;
 }
 
 #gallery[hidden] {
@@ -1937,6 +1942,131 @@ body.drawer-open #sound {
   }
 }
 
+/* ------------------------------------------------ 没入モード(Phase 11)
+
+   ギャラリーの四辺は、タブ帯・見出し・操作卓・計器・ナビで埋まっている。
+   狭い画面ではそれが「作品を見る」ことそのものを妨げるので、**一息で全部を
+   退かせる**口をひとつ置く ── キャンバスの単タップ、または ◉ UI のチップ。
+
+   消し方は display:none ではない。それをやると tablist / tabpanel の aria 関係も
+   フォーカスの行き先も下線の幾何も一度に壊れる。opacity + visibility +
+   pointer-events の 3 点で「そこに在るが、見えず、触れない」を作る。
+*/
+
+#immersive {
+  position: fixed;
+  right: var(--hud-inset);
+  bottom: var(--hud-inset);
+  z-index: 5;
+  display: none;
+  font-family: var(--font-mono);
+  transition:
+    opacity var(--t-immersive) var(--ease-out-quint),
+    visibility var(--t-immersive);
+}
+
+/* 立つのはギャラリーだけ。物語には隠すクロームが無い */
+body.mode-gallery #immersive {
+  display: block;
+  /* デスクトップの右下は操作卓のドックが占めている ── その左隣に座る */
+  right: calc(var(--gal-gutter) + var(--gal-panel-w) + var(--s3));
+}
+
+/* 退いたあと、チップだけは残って画面の隅で待つ。右下へ戻って絵を明け渡す */
+body.mode-gallery.ui-hidden #immersive {
+  right: var(--hud-inset);
+  bottom: var(--hud-inset);
+}
+
+body.drawer-open #immersive {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.i-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: var(--pill-h);
+  padding: 0 var(--s3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color var(--t-fast) linear,
+    border-color var(--t-fast) linear,
+    opacity var(--t-immersive) var(--ease-out-quint);
+}
+
+.i-chip:hover,
+.i-chip:focus-visible {
+  color: var(--ink);
+  border-color: rgba(79, 216, 255, 0.4);
+}
+
+.i-chip-glyph {
+  font-size: 0.72rem;
+  line-height: 1;
+  color: var(--ink-dim);
+  transition: color var(--t-fast) linear;
+}
+
+#immersive .i-chip[aria-pressed='true'] .i-chip-glyph {
+  color: var(--cyan);
+  text-shadow: 0 0 10px rgba(79, 216, 255, 0.5);
+}
+
+/* 退いているあいだは、居ることだけが分かる濃さで待つ */
+body.ui-hidden .i-chip {
+  opacity: 0.45;
+}
+
+body.ui-hidden .i-chip:hover,
+body.ui-hidden .i-chip:focus-visible {
+  opacity: 1;
+}
+
+/*
+  退場と復帰の尺は両方向とも同じ。#quality / #sound / キャプションは自前の
+  遷移(180ms / 220ms)を持っているので、ギャラリー中だけ上書きして揃える。
+*/
+#gallery-tabs,
+#gallery-head,
+#gallery-panel,
+#mode-nav,
+#hud,
+#perspective-inset,
+body.mode-gallery #quality,
+body.mode-gallery #sound,
+body.mode-gallery #perspective-caption {
+  transition:
+    opacity var(--t-immersive) var(--ease-out-quint),
+    visibility var(--t-immersive);
+}
+
+body.ui-hidden #gallery-tabs,
+body.ui-hidden #gallery-head,
+body.ui-hidden #gallery-panel,
+body.ui-hidden #gallery-panel > .panel,
+body.ui-hidden #mode-nav,
+body.ui-hidden #hud,
+body.ui-hidden #quality,
+body.ui-hidden #sound,
+body.ui-hidden #perspective-caption,
+body.ui-hidden #perspective-inset {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 /* ============================================================ COMPONENTS
    ここから下は src/ui/components/*.ts が生成する DOM のスタイル。
    値はすべて tokens.css のトークンを参照する。
@@ -2365,18 +2495,24 @@ html {
   outline-offset: 3px;
 }
 
-/* ------------------------------------------- ギャラリーのモバイル配置 */
+/* ------------------------------------------- ギャラリーのモバイル配置
 
-@media (max-width: 768px) {
+   条件に高さ/向きを足したのは Phase 11(監査の指摘)。
+   横向きの短い画面(667×375 等)でボトムシートを出すと、開いた瞬間に画面の
+   半分が操作卓になり、見出しは埋まり、作品はほぼ見えなくなる ── そこだけを
+   側面ドック版へ回す。縦持ちの小さい端末(320×568 等)はシート版のままが正しい。
+   **この条件は component.ts の SHEET_LAYOUT_QUERY と 1 文字も違ってはならない。**
+*/
+
+@media (max-width: 768px) and (min-height: 600px),
+  (max-width: 768px) and (orientation: portrait) {
   :root {
     /* 画面が狭いぶん、計器の余白は 1 段落とす */
     --hud-inset: var(--s3);
-  }
-
-  #gallery {
     --gal-gutter: 0.85rem;
-    /* ナビ(2.6rem)+ タブ帯(3.6rem)+ 余白ぶん下げてヘッダを置く */
-    --gal-shelf: 7.4rem;
+    /* ナビ(2.6rem)+ タブ帯(3.6rem)+ 余白ぶん下げてヘッダを置く。
+       Phase 11: 7.4rem ではヘッダがタブ帯へ 2.3px 食い込んでいた(実測)*/
+    --gal-shelf: 7.6rem;
   }
 
   /* 上から ナビ → タブ帯 → ヘッダ の順に積む(横に並べる幅がない) */
@@ -2400,7 +2536,15 @@ html {
     font-size: 0.74rem;
   }
 
-  /* パネルはボトムシート。グラブハンドル(ヘッダ全域)で開閉する */
+  /*
+    パネルはボトムシート。グラブハンドル(ヘッダ全域)で開閉する。
+    初期状態は **畳んだ状態**(index.html の is-collapsed)── 入場した人が
+    最初に見るのは作品であって操作卓ではない、という Phase 11 の判断。
+
+    perspective も同じ扱いにしてよくなった: 神視点インセットは右下から
+    タブ棚の下へ引っ越したので、シートがそれを覆うことはもう起きない
+    (Phase 10 まではここでインセットの上にシートが被さっていた)。
+  */
   #gallery-panel,
   #gallery[data-exhibit='perspective'] #gallery-panel {
     position: fixed;
@@ -2499,32 +2643,137 @@ html {
   }
 
   /*
-    計器の柱: ギャラリーではパネルがボトムシート(最大 46svh)になるため、
-    展示カウンタも品質チップもその上へ逃がす。順は下から
-    [ボトムシート] → [展示カウンタ] → [品質チップ]。
+    計器の柱: ギャラリーではパネルがボトムシートになるため、展示カウンタも
+    品質チップもその上へ逃がす。順は下から
+    [ボトムシート] → [展示カウンタ] → [音] → [品質チップ]。
+
+    Phase 11: 定数の 46svh を捨て、**シートの実測高さ**(--sheet-h)へ張り替えた。
+    46svh は「開いているときの上限」でしかなく、畳んだシート(≒3.5rem)のときは
+    計器が画面の中ほどに浮いて、作品の真上に居座っていた(監査の指摘)。
+    書き手は controls/Panel.ts ただ一人で、開閉とリサイズのときだけ書き換える。
+    bottom に遷移を持たせてあるので、シートの開閉に遅れず付いていく。
   */
+  body.mode-gallery .hud-ex,
+  body.mode-gallery #quality,
+  body.mode-gallery #sound,
+  body.mode-gallery #immersive {
+    transition:
+      bottom var(--t-med) var(--ease-out-quint),
+      opacity var(--t-immersive) var(--ease-out-quint),
+      visibility var(--t-immersive);
+  }
+
   body.mode-gallery .hud-ex {
-    bottom: calc(46svh + var(--s2));
+    bottom: calc(var(--sheet-h, 3.5rem) + var(--s2));
   }
 
   body.mode-gallery #quality {
     left: var(--hud-inset);
-    bottom: calc(46svh + var(--s2) + var(--hud-stack));
+    bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack));
   }
 
   /* 音チップも同じ柱に積む。下から [ボトムシート][展示カウンタ][音][品質] */
   body.mode-gallery #sound {
     left: var(--hud-inset);
-    bottom: calc(46svh + var(--s2) + var(--hud-stack));
+    bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack));
   }
 
   body.mode-gallery.has-sound #quality {
-    bottom: calc(46svh + var(--s2) + var(--hud-stack) * 2);
+    bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack) * 2);
+  }
+
+  /* 没入チップは右側の柱に単独で立つ(左は計器の柱) */
+  body.mode-gallery #immersive {
+    right: var(--hud-inset);
+    bottom: calc(var(--sheet-h, 3.5rem) + var(--s2));
   }
 
   .q-opt {
     min-height: 1.9rem;
     padding: 0.4rem 0.7rem;
+  }
+
+  /* ------------------------------------- PERSPECTIVE のモバイル配置(Phase 11)
+
+     神視点インセットは右下 → **タブ棚の直下・右**へ引っ越す。右下はボトムシートが
+     覆う場所で、「知覚(メインビュー)と実体(インセット)の対比」というこの展示の
+     核が、開いた操作卓の裏に隠れていた。
+     scissor 矩形は perspectiveExhibit.ts がこの枠を実測して合わせるので、
+     位置を決めているのはこの 3 行だけ ── 数式の二重実装は無い。
+  */
+  #perspective-inset {
+    top: calc(var(--gal-top) + var(--gal-shelf) + var(--s2));
+    right: 12px;
+    bottom: auto;
+  }
+
+  /* 見出しはインセットのぶんだけ幅を譲る(文字が絵の下に潜らない) */
+  #gallery[data-exhibit='perspective'] #gallery-head {
+    right: calc(var(--pv-inset-w, 123px) + 20px);
+  }
+
+  /*
+    キャプションはシートに追従して、**計器の柱の上**へ立つ。
+
+    Phase 10 まではキャプションの bottom が定数で、開いたシートの下敷きになって
+    完全に読めなかった。かといってシートの直上(+12px)へ置くと、今度は同じ帯に
+    立っている計器のピル(下から 展示カウンタ / 音 / 品質 の最大 3 段)が
+    文字の上に重なる ── どちらも「読めない」ことに変わりはない。
+    そこで柱 3 段ぶんを跨いだ高さに置き、幅も画面いっぱいまで開いて行数を減らす。
+    既定(畳んだシート)ではどのピルとも重ならない。
+  */
+  body.mode-gallery #perspective-caption {
+    /* left:50% + translateX の縮小幅は「left から右端まで」で頭打ちになる
+       (絶対配置の shrink-to-fit 規則)。モバイルでは両端で留めて幅を使い切る */
+    left: 12px;
+    right: 12px;
+    transform: none;
+    max-width: none;
+    bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack) * 3 + 12px);
+    transition:
+      bottom var(--t-med) var(--ease-out-quint),
+      opacity var(--t-immersive) var(--ease-out-quint),
+      visibility var(--t-immersive);
+  }
+}
+
+/* ------------------------------------------------- 背の低い横持ちの画面
+
+   667×375 のような横向きの端末は、幅ではモバイルでも高さが足りない。
+   ボトムシート版は使わない(上のメディアクエリが縦持ち/高さで弾く)が、
+   側面ドック版のままでは縦に積んだものが溢れる ── 実測で 2 つ重なっていた:
+     ① タブ帯(幅いっぱい)とトップナビ(右上)が同じ帯を取り合う
+     ② 見出しのタグラインが 3 行に折り返し、下の計器の柱へ食い込む
+   ここで直すのはその 2 つだけ。構造は側面ドック版のまま変えない。
+*/
+
+@media (max-height: 599px) and (orientation: landscape) {
+  :root {
+    /* 操作卓は幅にゆとりを持たせる(30vw = 200px ではスライダーが窮屈) */
+    --gal-panel-w: min(19rem, 42vw);
+  }
+
+  /* タブ帯はトップナビのぶんだけ右を空けて左寄せにする(足りなければ横スクロール) */
+  #gallery-tabs {
+    left: var(--gal-gutter);
+    right: calc(var(--gal-gutter) + 11rem);
+    transform: none;
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  /* 一文は畳む。見出し・日本語名・解説ボタンは残す ── 縦 375px に入る量がここまで */
+  .gh-tagline {
+    display: none;
+  }
+
+  /* 行間の余白も 1 段詰める。解説ボタンの下端が計器の柱の頭に触れないところまで */
+  .gh-index {
+    margin-bottom: 0.4rem;
+  }
+
+  .gh-jp {
+    margin-bottom: 0.5rem;
   }
 }
 
@@ -2665,7 +2914,16 @@ html {
   .q-readout,
   #sound,
   .s-chip,
-  .s-chip-glyph {
+  .s-chip-glyph,
+  #immersive,
+  .i-chip,
+  .i-chip-glyph,
+  #gallery-tabs,
+  #gallery-head,
+  #gallery-panel,
+  #hud,
+  #perspective-inset,
+  #perspective-caption {
     transition: none;
   }
 

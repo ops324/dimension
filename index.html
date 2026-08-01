@@ -116,7 +116,13 @@
         </button>
       </header>
 
-      <div id="gallery-panel"></div>
+      <!--
+        is-collapsed が初期状態(Phase 11)。モバイルではパネルはボトムシートに
+        なるので、開いたまま入場すると画面の 46% が作品ではなく操作卓で埋まる。
+        つまみを一度押せば開く ── 開閉状態は作り直されない側(この器)が持つ。
+        Panel.ts はこのクラスを読んで aria-expanded を組み立てる。
+      -->
+      <div id="gallery-panel" class="is-collapsed"></div>
 
       <aside id="gallery-drawer" aria-hidden="true" aria-labelledby="drawer-title">
         <div class="dw-head">

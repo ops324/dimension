@@ -47,8 +47,23 @@ const WORLD_SCALE = 1.6;
 const LINE_WIDTH = 2.6;
 /**
  * 加算合成の基礎輝度(既知の罠 #6)。実効値は overlapCompensation() を掛けたもの。
+ * Phase 11: 0.60 → 0.70。ブルーム(strength 0.95→0.40)で失ったピークを
+ * 線そのもので取り戻す。
  */
-const LINE_BASE_BRIGHTNESS = 0.6;
+const LINE_BASE_BRIGHTNESS = 0.7;
+
+/**
+ * 黒への指数フォグ(Phase 11 で新設)。
+ *
+ * 物語シーンにはフォグが無く、監査の実測では **4 展示 + 物語のなかで最も
+ * veil が強い**場面だった ── 6-cube の奥側の辺までフル輝度でブルームへ入り、
+ * 画面全体に低周波のにじみを敷いていた。密度 0.05 は
+ * 「図形(半径 ~2.3・カメラ距離 4.2〜6.4)の奥側だけを軽く落とす」量:
+ * 手前 exp(-(0.05·2)²)≈0.99 / 奥 exp(-(0.05·9)²)≈0.82。
+ * 星は fog:false の生 ShaderMaterial(starfield.ts)なので**一切影響を受けない** ──
+ * 距離 40〜150 の背景がフォグで消えることはない。
+ */
+const FOG_DENSITY = 0.05;
 const POINT_BASE_BRIGHTNESS = 0.72;
 
 /**
@@ -257,6 +272,7 @@ export class NarrativeScene implements Exhibit {
 
     this.scene = new THREE.Scene();
     this.scene.name = 'narrativeScene';
+    this.scene.fog = new THREE.FogExp2(0x000000, FOG_DENSITY);
 
     this.group.name = 'narrative';
     this.group.scale.setScalar(WORLD_SCALE);
@@ -289,6 +305,10 @@ export class NarrativeScene implements Exhibit {
       depthWrite: false,
       linewidth: LINE_WIDTH,
     });
+    // ShaderMaterial の fog 既定は false。**生成時に**立てること ── 実行中に
+    // 切り替えると USE_FOG の定義が変わるためプログラムの再ビルドが要る。
+    // LineMaterial の uniforms には UniformsLib.fog が含まれているので安全に効く。
+    this.material.fog = true;
     // resize 時の resolution 更新は engine が一元管理する(既知の罠 #3)
     ctx.engine.registerLineMaterial(this.material);
 
