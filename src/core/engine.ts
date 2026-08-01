@@ -59,6 +59,30 @@ const CAMERA_Z = 6;
 const CLEAR_COLOR = 0x000000;
 
 /**
+ * 縦長画面でのドリー(引き)量の上限。
+ *
+ * PerspectiveCamera の fov は **垂直** 画角なので、aspect < 1 の画面では水平方向の
+ * 視野が狭くなり、キーフレームどおりの距離だと被写体が左右にはみ出す
+ * (実測: 375×812 で 6-cube が両端を突き抜け、hopf は可視幅 3.81 単位で
+ * ファイバー束が四辺すべてから溢れていた)。カメラを原点から遠ざけることで、
+ * 構図の向きは一切変えずに横方向へ収める ── lookAt は原点のままなので純粋なドリー。
+ */
+const PORTRAIT_DOLLY_MAX = 1.6;
+/** これ以上狭いアスペクトでも上限で頭打ちにする */
+const PORTRAIT_ASPECT_FLOOR = 0.5;
+
+/**
+ * 縦長画面のドリー倍率。**この式の実装はここ 1 本だけ**にする ──
+ * 物語(narrative.ts のカメラリグ・線幅)もギャラリー(gallery.ts の
+ * ホーム姿勢・距離制限)も同じ数からしか構図を決めてはならない。
+ * 二重実装すると片方だけ調律がずれ、モードをまたいだ瞬間に絵が跳ねる。
+ */
+export function portraitDolly(aspect: number): number {
+  if (!(aspect < 1)) return 1; // NaN も 1 に倒す
+  return Math.min(PORTRAIT_DOLLY_MAX, 1 / Math.max(aspect, PORTRAIT_ASPECT_FLOOR));
+}
+
+/**
  * レンダリングの中枢。renderer / composer / camera / rAF ループ / resize を
  * 一箇所に集約する。シーンは差し替え式で、これらは常に 1 つだけ存在する。
  */
@@ -138,6 +162,15 @@ export class Engine {
   /** 経過時間(秒)。dt クランプ後の累積なので実時間とは厳密には一致しない */
   get time(): number {
     return this.elapsed;
+  }
+
+  /**
+   * いまのアスペクトに対する縦長ドリー倍率。**構図を決める側の唯一の読み口**。
+   * camera.aspect は applyResize() が resize コールバックを配る**前**に更新するので、
+   * onResize の中から読めば必ず新しい値になっている。
+   */
+  get portraitDolly(): number {
+    return portraitDolly(this.camera.aspect);
   }
 
   /** composer は再生成せず、RenderPass のシーン参照だけを差し替える */

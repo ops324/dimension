@@ -44,6 +44,15 @@ const DIST = 2.4;
 /** 投影半径 1.44(6D 時)× 1.6 ≒ 2.3 ワールド単位。カメラリグの画角に合わせた値 */
 const WORLD_SCALE = 1.6;
 
+/**
+ * 線幅(px)。**縦長ドリーで割って使う**(Phase 12a)。
+ *
+ * 縦長画面ではカメラを最大 1.6 倍まで引くので、図形は画面上で 1/1.6 に縮む。
+ * 線幅だけが px 固定のまま残ると、隣り合う辺の間隔が縮むのに芯の太さは変わらず、
+ * 6-cube のような密なワイヤーではハローが融合して面のように見える(監査の指摘)。
+ * 幅もドリーで割れば、画面上の「線どうしの隙間に対する太さ」が向きによらず一定になる。
+ * 375×812 では 2.6 / 1.6 = 1.63px。
+ */
 const LINE_WIDTH = 2.6;
 /**
  * 加算合成の基礎輝度(既知の罠 #6)。実効値は overlapCompensation() を掛けたもの。
@@ -203,19 +212,6 @@ const DRIFT_X = 0.08;
 const DRIFT_Y = 0.06;
 const DRIFT_Z = 0.05;
 
-/**
- * 縦長画面でのドリー(引き)量の上限。
- *
- * PerspectiveCamera の fov は **垂直** 画角なので、aspect < 1 の画面では水平方向の
- * 視野が狭くなり、キーフレームどおりの距離だと図形が左右にはみ出す
- * (実測: 375×812 で 6-cube が両端を突き抜けた)。カメラ位置ベクトルを
- * 1/aspect 倍(上限あり)してドリーバックすることで、構図の向きは変えずに
- * 横方向へ収める。lookAt は原点のままなので純粋なドリー。
- */
-const PORTRAIT_DOLLY_MAX = 1.6;
-/** これ以上狭いアスペクトでも上限で頭打ちにする */
-const PORTRAIT_ASPECT_FLOOR = 0.5;
-
 /** 深度(投影後 z、正規化済み ∈[-1,1])→ LUT の行インデックス */
 function lutIndexOf(depth: number, scale: number): number {
   const t = (depth * scale + 1) * 0.5 * LUT_MAX;
@@ -264,6 +260,8 @@ export class NarrativeScene implements Exhibit {
   private camera: THREE.PerspectiveCamera | null = null;
 
   private lineBrightness = LINE_BASE_BRIGHTNESS;
+  /** 縦長ドリー倍率。resize でだけ更新し、カメラリグと線幅の両方がこれを読む */
+  private dolly = 1;
   private reduceMotion = false;
   private initialized = false;
 
@@ -322,11 +320,16 @@ export class NarrativeScene implements Exhibit {
     });
     ctx.engine.onResize((_width, _height, pixelRatio) => {
       this.pointBatch.setPixelRatio(pixelRatio);
+      // アスペクトが変わればドリーが変わり、ドリーが変われば線幅も変わる。
+      // engine は camera.aspect を更新した**あと**にここを呼ぶので値は新しい
+      this.syncDolly(ctx.engine.portraitDolly);
     });
 
     this.group.add(this.lineBatch.object, this.pointBatch.object);
 
     this.camera = ctx.engine.camera;
+    // 起動時の 1 回(縦持ちで開かれたらこの時点で既に細い線で立ち上がる)
+    this.syncDolly(ctx.engine.portraitDolly);
 
     // reduced-motion ではカメラのアイドルドリフトを止める(スクロール駆動の
     // モーフ自体は物語の本体なので残す — 止めると内容が読めなくなるため)
@@ -413,6 +416,18 @@ export class NarrativeScene implements Exhibit {
   }
 
   // --- 内部 ------------------------------------------------------------------
+
+  /**
+   * 縦長ドリーの適用先は 2 つある(Phase 12a)。
+   *   ① カメラの引き — updateCamera がキーフレームへ掛ける
+   *   ② 線幅 — 引いたぶん図形が縮むので、px 固定の芯だけが相対的に太くなるのを打ち消す
+   * どちらも resize のときにだけ決まる。倍率そのものは engine が唯一の持ち主。
+   * 呼ばれるのは init() の末尾と onResize だけ ── どちらも material 生成済み。
+   */
+  private syncDolly(dolly: number): void {
+    this.dolly = dolly;
+    this.material.linewidth = LINE_WIDTH / dolly;
+  }
 
   /** 辺ごとに SUBDIV+1 点を 6D のまま線形補間して連続配置する */
   private buildSubdivided(poly: Polytope): void {
@@ -629,10 +644,9 @@ export class NarrativeScene implements Exhibit {
     const from = index === 0 ? CAMERA_KEYS[0] : CAMERA_KEYS[index - 1];
     const b = smoothstep(this.director.localT / CAMERA_BLEND_FRACTION);
 
-    // 縦長画面では水平方向に収まるようドリーバックする(構図の向きは変えない)
-    const aspect = camera.aspect;
-    const dolly =
-      aspect < 1 ? Math.min(PORTRAIT_DOLLY_MAX, 1 / Math.max(aspect, PORTRAIT_ASPECT_FLOOR)) : 1;
+    // 縦長画面では水平方向に収まるようドリーバックする(構図の向きは変えない)。
+    // 値は resize でだけ決まる ── 毎フレームここで計算し直さない(線幅と同じ 1 個)
+    const dolly = this.dolly;
 
     let x = (from.x + (to.x - from.x) * b) * dolly;
     let y = (from.y + (to.y - from.y) * b) * dolly;
