@@ -16,6 +16,8 @@ import { Tabs } from '../ui/components/Tabs';
 import { ExhibitHeader } from '../ui/components/ExhibitHeader';
 import { Drawer } from '../ui/components/Drawer';
 import { createHud, type Hud } from '../ui/components/Hud';
+import { ImmersiveToggle } from '../ui/components/ImmersiveToggle';
+import { SHEET_LAYOUT_QUERY } from '../ui/components/component';
 
 /**
  * ギャラリーのモード状態機械(プラン3節)。
@@ -108,6 +110,14 @@ const HINT_RATE = 3.2;
 /** controls.target の復帰先。共有の読み取り専用ベクタ(mutate 禁止) */
 const ORIGIN = new Vector3(0, 0, 0);
 
+/**
+ * キャンバスの「単タップ」判定(Phase 11)。
+ * OrbitControls のドラッグと食い合わないよう、移動 8px 未満・350ms 未満に限る。
+ * この条件を満たす操作は構図をほとんど動かさないので、意図は「見たい」だけ。
+ */
+const TAP_MOVE_PX = 8;
+const TAP_MS = 350;
+
 export class Gallery {
   private readonly engine: Engine;
   private readonly canvas: HTMLCanvasElement;
@@ -120,6 +130,7 @@ export class Gallery {
 
   private readonly rootEl: HTMLElement;
   private readonly panelRoot: HTMLElement;
+  private readonly tabsEl: HTMLElement;
   /** モード遷移の幕(Phase 9a で #mode-fade の単純な暗転から置き換え) */
   private readonly transition = new TransitionOverlay();
   private readonly drawerEl: HTMLElement;
@@ -130,6 +141,8 @@ export class Gallery {
   private readonly header: ExhibitHeader;
   private readonly drawer: Drawer;
   private readonly hud: Hud | null;
+  /** クロームを退かせるチップ。#hud の**外**に立つ(#hud は aria-hidden) */
+  private readonly immersive: ImmersiveToggle;
 
   private controls: OrbitControls | null = null;
   private perspective: PerspectiveExhibit | null = null;
@@ -150,6 +163,18 @@ export class Gallery {
   private readonly hint: CameraHint = { pos: new Vector3(), look: new Vector3() };
   private hintPausedUntil = 0;
 
+  // --- 没入モードとセーフエリア(Phase 11) ---
+  /** ボトムシート版レイアウトか。CSS と同じ 1 本の条件から取る */
+  private readonly sheetLayout: MediaQueryList | null;
+  private uiHidden = false;
+  /** Panel が実測して配るシートの可視高さ(CSS px) */
+  private sheetHeight = 0;
+  /** キャンバスの単タップ判定 */
+  private tapId = -1;
+  private tapX = 0;
+  private tapY = 0;
+  private tapAt = 0;
+
   constructor(options: GalleryOptions) {
     this.engine = options.engine;
     this.canvas = options.canvas;
@@ -161,6 +186,7 @@ export class Gallery {
 
     this.rootEl = requireEl('gallery');
     this.panelRoot = requireEl('gallery-panel');
+    this.tabsEl = requireEl('gallery-tabs');
     this.transition.mount(document.body);
     this.drawerEl = requireEl('gallery-drawer');
     this.aboutButton = requireEl('about-toggle') as HTMLButtonElement;
@@ -179,7 +205,7 @@ export class Gallery {
     this.panelRoot.setAttribute('role', 'tabpanel');
 
     this.tabs = new Tabs({
-      container: requireEl('gallery-tabs'),
+      container: this.tabsEl,
       items: EXHIBIT_REGISTRY.map((entry) => {
         const info = infoFor(entry.id);
         return { id: entry.id, en: info.en, jp: info.jp };
@@ -196,11 +222,18 @@ export class Gallery {
       onRequestClose: () => this.closeDrawer(),
     });
     this.hud = createHud();
+    this.immersive = new ImmersiveToggle(() => this.setUiHidden(!this.uiHidden));
+    this.immersive.mount(document.body);
+
+    this.sheetLayout = window.matchMedia?.(SHEET_LAYOUT_QUERY) ?? null;
+    this.sheetLayout?.addEventListener('change', () => this.syncSafeArea());
 
     // 行分割は幅に依存する。engine.onResize は 150ms デバウンス済みなので、
     // ここでの組み直しは「リサイズが落ち着いたら 1 回」に収まる
     this.engine.onResize(() => {
-      if (this.mode === 'gallery') this.header.remeasure();
+      if (this.mode !== 'gallery') return;
+      this.header.remeasure();
+      this.syncSafeArea();
     });
 
     this.wireChrome();
@@ -261,6 +294,9 @@ export class Gallery {
       const controls = this.ensureControls();
       controls.enabled = true;
 
+      // パネルが組み上がって --sheet-h が確定してから構図をずらす
+      this.syncSafeArea();
+
       this.busy = false;
       this.fade(false);
       console.info(`[gallery] enter → ${this.activeId}`);
@@ -281,6 +317,8 @@ export class Gallery {
         this.switchTimer = 0;
       }
       this.closeDrawer();
+      // 没入モードは展示を出た時点で解く(物語のテキストが読めなくなる)
+      this.setUiHidden(false);
       this.active?.exit();
       this.active = null;
 
@@ -290,6 +328,8 @@ export class Gallery {
       document.body.style.overflow = '';
       this.rootEl.hidden = true;
       this.updateNavState();
+      // 物語はスクロールで読む画面なので、構図のずらしは必ず解く
+      this.engine.clearSafeArea();
 
       if (this.controls !== null) this.controls.enabled = false;
 
@@ -337,6 +377,9 @@ export class Gallery {
       this.applyHome(id, false);
       this.buildPanel(next);
       this.applyInfo(id);
+      // 展示ごとにシートの中身の高さが違う ── 開いたまま切り替えたときは
+      // --sheet-h も構図のずらしも新しい高さへ揃え直す
+      this.syncSafeArea();
       console.info(`[gallery] switch → ${id}`);
     };
 
@@ -443,12 +486,97 @@ export class Gallery {
       });
     }
 
+    // シートの高さは Panel が実測して配る。構図をずらす側はここで受ける
+    window.addEventListener('dimension:sheet', (event) => {
+      const height = (event as CustomEvent<number>).detail;
+      if (typeof height !== 'number' || height === this.sheetHeight) return;
+      this.sheetHeight = height;
+      this.syncSafeArea();
+    });
+
+    // キャンバスの単タップで没入モードを往復する(ドラッグとは食い合わない)
+    this.canvas.addEventListener('pointerdown', this.onCanvasDown);
+    this.canvas.addEventListener('pointerup', this.onCanvasUp);
+    this.canvas.addEventListener('pointercancel', this.onCanvasCancel);
+
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && this.mode === 'gallery') {
-        if (this.drawer.isOpen) this.closeDrawer();
+        // 順序は契約: 隠しているものから先に戻す。ここで止めないと
+        // 「作品だけを見ていた人が Esc で展示ごと退場させられる」ことになる
+        if (this.uiHidden) this.setUiHidden(false);
+        else if (this.drawer.isOpen) this.closeDrawer();
         else this.exitGallery();
       }
     });
+  }
+
+  // --- 没入モード ------------------------------------------------------------
+
+  /**
+   * クロームの在/不在。display:none にはしない ── タブリストと tabpanel の
+   * aria 関係、フォーカスの行き先、下線の幾何が一度に壊れるため、
+   * 不透明度 + visibility + pointer-events の 3 点で「そこに在るが見えない」を作る。
+   */
+  private setUiHidden(hidden: boolean): void {
+    if (hidden === this.uiHidden) return;
+    this.uiHidden = hidden;
+    document.body.classList.toggle('ui-hidden', hidden);
+    this.immersive.setHidden(hidden);
+    // 神視点インセットは WebGL の第2パスなので CSS では消えない。展示へ直接伝える
+    this.perspective?.setChromeHidden(hidden);
+    // 没入中は画面が丸ごと作品なので、構図のずらしも解く
+    this.syncSafeArea();
+    // 隠した瞬間にフォーカスが見えない要素へ残らないようにする
+    if (hidden) {
+      const active = document.activeElement;
+      if (active instanceof HTMLElement && this.rootEl.contains(active)) active.blur();
+    }
+  }
+
+  private readonly onCanvasDown = (event: PointerEvent): void => {
+    if (this.mode !== 'gallery' || !event.isPrimary || event.button > 0) {
+      this.tapId = -1;
+      return;
+    }
+    this.tapId = event.pointerId;
+    this.tapX = event.clientX;
+    this.tapY = event.clientY;
+    this.tapAt = event.timeStamp;
+  };
+
+  private readonly onCanvasUp = (event: PointerEvent): void => {
+    if (this.tapId !== event.pointerId) return;
+    this.tapId = -1;
+    if (this.mode !== 'gallery' || this.busy || this.drawer.isOpen) return;
+    if (event.timeStamp - this.tapAt > TAP_MS) return;
+    const dx = event.clientX - this.tapX;
+    const dy = event.clientY - this.tapY;
+    if (dx * dx + dy * dy > TAP_MOVE_PX * TAP_MOVE_PX) return;
+    this.setUiHidden(!this.uiHidden);
+  };
+
+  private readonly onCanvasCancel = (): void => {
+    this.tapId = -1;
+  };
+
+  // --- セーフエリア ----------------------------------------------------------
+
+  /**
+   * UI が覆っている帯を engine へ伝える(Phase 11)。
+   *
+   * 上 = タブ帯の下端(ナビ + タブ棚の実測)、下 = シートの可視高さ。
+   * ボトムシート版レイアウトのときだけ意味を持つので、それ以外では必ず解除する ──
+   * デスクトップは左右のドックなので上下の構図は動かさない。
+   * 呼ばれるのは入場・タブ切替・シート開閉・リサイズ・没入切替だけで、
+   * 毎フレームのコストはゼロ。
+   */
+  private syncSafeArea(): void {
+    if (this.mode !== 'gallery' || this.uiHidden || this.sheetLayout?.matches !== true) {
+      this.engine.clearSafeArea();
+      return;
+    }
+    const top = this.tabsEl.getBoundingClientRect().bottom;
+    this.engine.setSafeArea(top, this.sheetHeight);
   }
 
   // --- 内部: 遷移の部品 ------------------------------------------------------

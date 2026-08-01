@@ -50,8 +50,10 @@ const DENSITY_REFERENCE_FIBERS = 240;
  * トーラス束の中心軸方向は視線が数十本のファイバーを掠めるため加算が
  * 積み上がる(≈2×リング数の交差)。1 本あたり ~0.1 前後に抑えると
  * 中心は「熱いコア」として残りつつ純白飽和しない — 実測で決めた値。
+ * Phase 11: 0.21 → 0.25。ブルーム強度を 0.95 → 0.40 へ落としたぶん、
+ * 芯のピーク輝度を線そのもので取り戻す(にじみで稼がない)。
  */
-const BASE_BRIGHTNESS = 0.21;
+const BASE_BRIGHTNESS = 0.25;
 /** 本数増加時の減光指数(1/√ では 600 本時にまだ飽和した — 実測) */
 const DENSITY_EXPONENT = 0.7;
 
@@ -98,8 +100,10 @@ export class HopfExhibit implements Exhibit {
     this.scene = new THREE.Scene();
     this.scene.name = 'hopfScene';
     // 黒への指数フォグ = 加算合成における距離減衰。束の裏側の積み上げを抑え、
-    // 手前のファイバーが立ち上がる奥行きを作る(中心飽和対策の本命 — 実測)
-    this.scene.fog = new THREE.FogExp2(0x000000, 0.09);
+    // 手前のファイバーが立ち上がる奥行きを作る(中心飽和対策の本命 — 実測)。
+    // Phase 11: 0.09 → 0.11。**フォグは veil を減らす**(直感に反するが実測)──
+    // 遠方のジオメトリをブルームへ入る前に減衰させるので、にじみの原料が減る。
+    this.scene.fog = new THREE.FogExp2(0x000000, 0.11);
     this.group.name = 'hopf';
     this.scene.add(this.group);
 

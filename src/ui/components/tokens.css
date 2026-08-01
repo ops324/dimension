@@ -20,6 +20,10 @@
   --t-med: 420ms;
   --t-slow: 800ms;
   --t-reveal: 1100ms;
+  /* クロームの退場・復帰(Phase 11 の没入モード)。
+     med(420ms)では「操作が効いていない」と感じ、fast(180ms)では
+     消えたことに気づけない ── その間に置いた尺 */
+  --t-immersive: 320ms;
   /* hairlines & surfaces */
   --hairline: rgba(255, 255, 255, 0.08);
   --hairline-strong: rgba(255, 255, 255, 0.16);

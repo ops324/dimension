@@ -32,9 +32,23 @@ const N_MAX = 10;
 
 /** 線幅(CSS px)。gl.lineWidth は使えないので Line2 のファットライン */
 const LINE_WIDTH = 2.5;
-/** 加算合成 + ACES で白飛びさせないための基礎輝度(既知の罠 #6) */
-const LINE_BASE_BRIGHTNESS = 0.8;
+/**
+ * 加算合成 + ACES で白飛びさせないための基礎輝度(既知の罠 #6)。
+ * Phase 11: 0.80 → 0.90(ブルーム減量ぶんのピークを線そのもので取り戻す)。
+ */
+const LINE_BASE_BRIGHTNESS = 0.9;
 const POINT_BRIGHTNESS = 0.85;
+
+/**
+ * 黒への指数フォグ(Phase 11 で新設)。
+ *
+ * 高 n の入れ子構造は奥側の辺が大量に重なる。フォグはそれをブルームへ入る**前**に
+ * 減衰させるので、にじみ(veil)の原料そのものが減る ── フォグを足すと画面は
+ * 濁るのではなく、逆に澄む(監査の実測)。像の半径は自動フィットで常に ~2.3、
+ * カメラ距離は 2.2〜20 なので、密度 0.05 は手前 0.99 / 奥 0.85 程度の穏やかな傾斜。
+ * 星は fog:false の生 ShaderMaterial なので影響を受けない(背景は消えない)。
+ */
+const FOG_DENSITY = 0.05;
 
 /**
  * 密度補正(既知の罠 #6 の本丸)。
@@ -227,6 +241,7 @@ export class PolytopeExhibit implements Exhibit {
   constructor(params?: Partial<PolytopeParams>) {
     this.scene = new THREE.Scene();
     this.scene.name = 'polytopeScene';
+    this.scene.fog = new THREE.FogExp2(0x000000, FOG_DENSITY);
 
     // Phase 2 の既定は性能ストレスケースの 10-cube。
     // 出荷時の既定(おそらく n=4 のテッセラクト)は Phase 7 で決める。
@@ -258,6 +273,9 @@ export class PolytopeExhibit implements Exhibit {
       depthWrite: false,
       linewidth: LINE_WIDTH,
     });
+    // ShaderMaterial の fog 既定は false。**生成時に**立てること ── 実行中に
+    // 切り替えると USE_FOG の定義が変わるためプログラムの再ビルドが要る。
+    this.material.fog = true;
     // resize 時の resolution 更新は engine が一元管理する(既知の罠 #3)
     ctx.engine.registerLineMaterial(this.material);
 

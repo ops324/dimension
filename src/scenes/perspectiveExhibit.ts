@@ -19,6 +19,7 @@ import { PointBatch } from '../render/pointBatch';
 import { CYAN, GOLD, MAGENTA, VIOLET } from '../render/palette';
 import { perspectiveCaption } from '../ui/content';
 import { createPanel } from '../ui/panel';
+import { SHEET_LAYOUT_QUERY } from '../ui/components/component';
 
 import type { EngineCtx, Exhibit } from './exhibit';
 
@@ -73,12 +74,17 @@ const LINE_WIDTH = 2.6;
 /**
  * 断面ワイヤの基礎輝度。線が数十本しかないので密度補正は不要(既知の罠 #6 は
  * 5000 本級の polytope explorer の話)。
+ *
+ * Phase 11: この展示だけはフォグを入れない(断面は数十本の疎な線で、遠近の
+ * 積み上がりが起きないため)。その代わりブルーム減量ぶんの取り返しが無く、
+ * 実測でも 4 展示中いちばん暗かった(行ごとのピーク 55/255 に対し他は 165〜207)。
+ * よって 3 モードとも基礎輝度を +10% する ── 他の展示と同じ扱いに揃える。
  */
-const SLICE_BRIGHTNESS = 0.6;
+const SLICE_BRIGHTNESS = 0.66;
 /** 影モードの基礎輝度。6-cube で 192 本まで増えるので軽い密度補正を入れる */
-const SHADOW_BRIGHTNESS = 0.62;
+const SHADOW_BRIGHTNESS = 0.68;
 const SHADOW_DENSITY_REFERENCE = 96;
-const XRAY_BRIGHTNESS = 0.62;
+const XRAY_BRIGHTNESS = 0.68;
 
 /** 断面の頂点グロー */
 const SLICE_POINT_SIZE = 0.75;
@@ -146,6 +152,13 @@ const INSET_ASPECT = 2.2 / 3;
 const INSET_MIN_WIDTH = 150;
 const INSET_MAX_WIDTH = 280;
 const INSET_WIDTH_RATIO = 0.3;
+/**
+ * モバイル(ボトムシート版レイアウト)での縮小率(Phase 11)。
+ * インセットは右下からタブ棚の直下へ引っ越す ── 右下はシートが覆う場所で、
+ * 神視点が「開いた操作卓の裏に隠れる」のがこの展示で最も惜しい欠陥だった。
+ * 引っ越し先は見出しと同じ帯なので、一回り小さくして文字と釣り合わせる。
+ */
+const INSET_MOBILE_SCALE = 0.82;
 /** インセットのグリッド/超平面クアッドの一辺 */
 const INSET_PLANE_SIZE = 2.4;
 
@@ -336,6 +349,16 @@ export class PerspectiveExhibit implements Exhibit {
   /** インセットの辺数が固定の族(n-球)では毎フレーム書き換えない */
   private insetEdgeStatic = false;
   private insetVisible = false;
+  /** 没入モード(body.ui-hidden)。CSS では消せない第2パスをここで止める */
+  private chromeHidden = false;
+  /**
+   * scissor 矩形(CSS px・原点は左上)。**DOM 枠の実測**がただ一つの情報源で、
+   * 配置を決めているのは CSS ── 枠と絵が 1px もずれないための唯一の道。
+   */
+  private readonly insetRect = { x: 0, top: 0, w: 0, h: 0 };
+  private insetMeasured = false;
+  private readonly sheetLayout: MediaQueryList | null =
+    window.matchMedia?.(SHEET_LAYOUT_QUERY) ?? null;
   private insetFrame: HTMLElement | null = null;
   private insetReadout: HTMLElement | null = null;
   private insetReadoutText = '';
@@ -1321,12 +1344,15 @@ export class PerspectiveExhibit implements Exhibit {
   readonly renderInset = (renderer: THREE.WebGLRenderer): void => {
     if (!this.initialized || !this.insetVisible) return;
 
-    // setViewport/setScissor は内部で pixelRatio 倍されるので CSS px を渡す
+    // setViewport/setScissor は内部で pixelRatio 倍されるので CSS px を渡す。
+    // 位置は DOM 枠の実測(= CSS が決めた場所)。測れていないときだけ右下の既定へ。
     const size = renderer.getSize(this.tmpSize);
-    const w = insetWidthFor(size.x);
-    const h = w * INSET_ASPECT;
-    const x = size.x - INSET_MARGIN - w;
-    const y = INSET_MARGIN;
+    const measured = this.insetMeasured;
+    const w = measured ? this.insetRect.w : insetWidthFor(size.x);
+    const h = measured ? this.insetRect.h : w * INSET_ASPECT;
+    const x = measured ? this.insetRect.x : size.x - INSET_MARGIN - w;
+    // GL のビューポート原点は左下。CSS の top から反転する
+    const y = measured ? size.y - this.insetRect.top - h : INSET_MARGIN;
 
     renderer.getViewport(this.savedViewport);
     renderer.getScissor(this.savedScissor);
@@ -1380,20 +1406,60 @@ export class PerspectiveExhibit implements Exhibit {
   /**
    * インセットの DOM 枠の寸法を scissor 矩形と一致させる。
    * 幅の式は insetWidthFor() ひとつだけが持ち、CSS へは custom property で渡す
-   * (2 箇所で計算するとズレるため)。
+   * (2 箇所で計算するとズレるため)。**位置**は CSS が決め、こちらは実測する。
    */
   private layoutInset(viewportWidth: number): void {
-    const w = insetWidthFor(viewportWidth);
+    const scale = this.sheetLayout?.matches === true ? INSET_MOBILE_SCALE : 1;
+    const w = insetWidthFor(viewportWidth) * scale;
     const root = document.documentElement.style;
     root.setProperty('--pv-inset-w', `${w.toFixed(1)}px`);
     root.setProperty('--pv-inset-h', `${(w * INSET_ASPECT).toFixed(1)}px`);
     root.setProperty('--pv-inset-margin', `${INSET_MARGIN}px`);
+    this.measureInsetRect();
+  }
+
+  /**
+   * DOM 枠の実際の矩形を読んで scissor の位置を決める。
+   *
+   * モバイルでは枠が右下からタブ棚の直下へ引っ越すが、その引っ越しを書いているのは
+   * CSS のメディアクエリだけ ── ここで同じ条件を二重に実装すると必ずズレるので、
+   * **結果を測る**。枠が畳まれている(display:none)ときは測れないので、
+   * renderInset 側の既定(右下)へ落とす。
+   */
+  private measureInsetRect(): void {
+    const frame = this.insetFrame;
+    if (frame === null) {
+      this.insetMeasured = false;
+      return;
+    }
+    const rect = frame.getBoundingClientRect();
+    if (!(rect.width > 1 && rect.height > 1)) {
+      this.insetMeasured = false;
+      return;
+    }
+    this.insetRect.x = rect.left;
+    this.insetRect.top = rect.top;
+    this.insetRect.w = rect.width;
+    this.insetRect.h = rect.height;
+    this.insetMeasured = true;
+  }
+
+  /**
+   * 没入モードの通知(gallery が唯一の呼び手)。
+   * インセットは composer の後の第2パスなので CSS では止まらない ── ここで止める。
+   */
+  setChromeHidden(hidden: boolean): void {
+    if (hidden === this.chromeHidden) return;
+    this.chromeHidden = hidden;
+    this.applyVisibility();
   }
 
   private applyVisibility(): void {
-    this.insetVisible = this.active && this.mode !== 'xray';
+    this.insetVisible = this.active && this.mode !== 'xray' && !this.chromeHidden;
     this.insetFrame?.classList.toggle('is-visible', this.insetVisible);
-    this.captionEl?.classList.toggle('is-visible', this.active);
+    this.captionEl?.classList.toggle('is-visible', this.active && !this.chromeHidden);
+    // 枠が現れた直後にだけ測る(display:none のあいだは矩形が取れない)
+    if (this.insetVisible) this.measureInsetRect();
   }
 
   /** s の読み出しは 2 桁表示が変わったときだけ DOM を触る */
