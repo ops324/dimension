@@ -10,13 +10,52 @@
       content="人間が直接見ることのできない高次元の構造を、スクロールする物語と対話型ギャラリーで体験する可視化作品。"
     />
     <title>DIMENSION｜高次元を見る</title>
+    <!-- JS 無効時でも本文が読めるようにする(通常は fonts.ready が .fonts-ready を付ける) -->
+    <noscript>
+      <style>
+        #narrative,
+        .chapter-inner {
+          opacity: 1 !important;
+        }
+      </style>
+    </noscript>
   </head>
   <body>
     <!-- 全画面の固定キャンバス。配置は style.css の #gl が担う -->
     <canvas id="gl"></canvas>
 
-    <!-- HUD プレースホルダ: 次元カウンタ・品質表示などは Phase 3 / Phase 8 で実装 -->
-    <div id="hud" aria-hidden="true"></div>
+    <!-- スクロール進捗バー(2px・シアン→マゼンタ) -->
+    <div id="progress" aria-hidden="true"><div id="progress-bar"></div></div>
+
+    <!--
+      物語セクション。中身は src/ui/overlays.ts の buildNarrativeDOM() が
+      src/ui/content.ts から生成して置き換える。ここに残す静的マークアップは
+      JS を実行しないクローラ向けの最小限(h1 + 導入文)。
+    -->
+    <main id="narrative">
+      <section class="chapter" data-role="prologue" data-align="left" data-ch="0">
+        <div class="pin">
+          <div class="chapter-inner">
+            <h1 class="ch-en" style="--len: 9">DIMENSION</h1>
+            <h2 class="ch-title">見えない次元へ</h2>
+            <p class="ch-body">
+              人間の目は、三つの方向しか受けとれない。縦と、横と、奥ゆき。それでも数学は、その先へ進むことができる
+              ── 見えないまま、正確に。スクロールするたび、世界に方向がひとつずつ加わっていく。
+            </p>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <!-- HUD レイヤ。次元カウンタの値は overlays.ts が毎フレーム更新する -->
+    <div id="hud" aria-hidden="true">
+      <div class="hud-dim">
+        <span class="hud-value" id="hud-value">0.00</span>
+        <span class="hud-unit">D</span>
+        <span class="hud-sep"></span>
+        <span class="hud-word" id="hud-word">DIMENSION</span>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>
