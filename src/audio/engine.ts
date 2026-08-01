@@ -16,6 +16,7 @@
  */
 
 import { AmbientDrone } from './ambient';
+import { BinauralLayer } from './binaural';
 
 /** 出力レベル。すべてこの順に掛かってからコンプレッサへ入る */
 export const LEVELS = {
@@ -125,9 +126,18 @@ export class AudioEngine {
   private ctx: AudioContext | null = null;
   private chain: AudioChain | null = null;
   private drone: AmbientDrone | null = null;
+  /** ドローンの隣。必ず同じ合図で起き、同じ合図で寝る */
+  private binaural: BinauralLayer | null = null;
 
   private on = false;
   private stored: 'on' | 'off' | null = null;
+  /**
+   * 最後に受け取った拍。**層より先に届いた値がここで待つ** ── 音を入れる前から
+   * 物語は進んでいるので、生まれたばかりの層にまずこれを渡す。渡さないと
+   * 既定の 10Hz で立ち上がってから今の拍へ滑ることになり、入場で拍が動く。
+   * NaN = まだ一度も届いていない(層は自分の既定のまま立ち上がる)。
+   */
+  private pendingBeat = Number.NaN;
   /** ユーザー操作が一度でもあったか。これが立つまで AudioContext を作らない */
   private gestured = false;
   private booted = false;
@@ -151,6 +161,11 @@ export class AudioEngine {
   /** 検証フック: グラフが立っているか / コンテキストの状態 */
   get ambientActive(): boolean {
     return this.drone !== null && this.drone.active;
+  }
+
+  /** 検証フック: 両耳の層(まだ一度も鳴らしていなければ null) */
+  get binauralLayer(): BinauralLayer | null {
+    return this.binaural;
   }
 
   get contextState(): string {
@@ -220,6 +235,18 @@ export class AudioEngine {
     this.setEnabled(!this.on);
   }
 
+  /**
+   * 拍(Hz)を差し出す。**毎フレーム呼んでよい** ── 間引きは層の側が持つ。
+   *
+   * 層がまだ無ければ何も起きない(= 音を出せない環境・一度も ON にしていない
+   * 訪問では完全な no-op)。黙っているあいだの呼び出しは値を覚えるだけで、
+   * 発振器は畳まれたまま ── 次に ON にした瞬間、その拍から立ち上がる。
+   */
+  setBeat(hz: number): void {
+    this.pendingBeat = hz;
+    this.binaural?.setBeat(hz);
+  }
+
   // --- 内部 ------------------------------------------------------------------
 
   /** 最初のユーザー操作。設定が ON のまま戻ってきた訪問はここで目を覚ます */
@@ -258,6 +285,16 @@ export class AudioEngine {
       this.drone = new AmbientDrone({ ctx: chain.ctx, dest: chain.ambient });
     }
     this.drone.start(AMBIENT_FADE_S);
+
+    // 両耳の層はドローンと**同じ合図・同じ尺**で立ち上がる。別の口(トグル)を
+    // 持たせない ── 「音を出すか」以外の選択をこの作品は要求しない
+    if (this.binaural === null) {
+      this.binaural = new BinauralLayer({ ctx: chain.ctx, dest: chain.ambient });
+      // 立ち上げる前に「いまの拍」を渡す(グラフはまだ無いので値を覚えるだけ)。
+      // NaN のときは層の既定のまま ── どちらにせよ入場で拍は動かない
+      this.binaural.setBeat(this.pendingBeat);
+    }
+    this.binaural.start(AMBIENT_FADE_S);
   }
 
   /** 黙らせる。ドローンは自分の 2.5 秒で引き、そのあとコンテキストを眠らせる */
@@ -267,6 +304,7 @@ export class AudioEngine {
 
     this.ramp(chain.master.gain, 0, FADE_OUT_S);
     this.drone?.stop(AMBIENT_FADE_S);
+    this.binaural?.stop(AMBIENT_FADE_S);
 
     if (this.suspendTimer !== 0) window.clearTimeout(this.suspendTimer);
     this.suspendTimer = window.setTimeout(() => {

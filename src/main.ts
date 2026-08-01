@@ -372,5 +372,20 @@ function devAudioHooks(wiring: AudioWiring): Record<string, unknown> {
     wiring,
     render: async (name: string) => (await import('./audio/render')).render(name),
     renderAll: async () => (await import('./audio/render')).renderAll(),
+    /**
+     * 両耳の層のいま。left / right は AudioParam の現在値なので、
+     * 拍を動かした直後は τ=0.8s の途中の値が返る(滑っている証拠でもある)。
+     */
+    binaural: (): Record<string, unknown> | null => {
+      const layer = audio.binauralLayer;
+      if (layer === null) return null;
+      return {
+        active: layer.active,
+        beat: layer.beatHz,
+        left: layer.leftHz,
+        right: layer.rightHz,
+        split: layer.rightHz - layer.leftHz,
+      };
+    },
   };
 }

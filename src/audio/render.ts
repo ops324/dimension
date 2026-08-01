@@ -16,6 +16,7 @@
  */
 
 import { AmbientDrone } from './ambient';
+import { BinauralLayer } from './binaural';
 import { buildChain, LEVELS, type AudioChain } from './engine';
 import {
   buildBell,
@@ -65,7 +66,16 @@ const DURATIONS: Readonly<Record<string, number>> = {
   bell4: 3.2,
   bell5: 3.2,
   bell6: 3.2,
-  ambient: 1.5,
+  /**
+   * 環境音は 3.0 秒で測る。
+   *
+   * 以前の 1.5 秒は**短すぎた** ── ドローンのうなりは 0.35Hz、すなわち周期
+   * 2.9 秒である。1.5 秒の窓はその半周期しか含まないので、窓の位置によって
+   * 実効値が最大 31% 低く出る(監査の指摘)。3.0 秒なら丸ごと一周期を含む。
+   */
+  ambient: 3.0,
+  /** 両耳の層。いちばん遅い拍(2Hz = 周期 0.5s)を 8 周期ぶん含む長さ */
+  binaural: 4.0,
 };
 
 export interface Measurement {
@@ -105,6 +115,10 @@ export async function render(name: string): Promise<Measurement> {
     // ドローンの立ち上がりは 2.5 秒。助走のあいだに満ちていてほしいので、
     // **定常状態**を測るために立ち上がりだけ 20ms へ縮める(音の中身は同じ)
     new AmbientDrone({ ctx, dest: chain.ambient }).start(0.02);
+  } else if (name === 'binaural') {
+    // 両耳の層**だけ**をチェーンへ差す。ドローンと混ぜないので、左右の分離と
+    // 拍(R の高さ − L の高さ)を汚れのない波形から直接読める
+    new BinauralLayer({ ctx, dest: chain.ambient }).start(0.02);
   } else {
     build(name, chain, LEAD_S);
   }
