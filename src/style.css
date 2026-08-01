@@ -436,6 +436,105 @@ body.fonts-ready #narrative {
   color: var(--ink-dim);
 }
 
+/* ----------------------------------------------- PERSPECTIVE 展示のオーバーレイ
+
+   神視点インセットは WebGL の第2パス(scissor 矩形)として **キャンバスの中**に
+   描かれる。この div はその上に重ねる「額縁」だけで、塗りつぶしてはいけない
+   (背景を塗るとインセットの絵が隠れる)。内側のビネットで枠らしさを出す。
+   寸法は perspectiveExhibit.ts が --pv-inset-* に書き込む値がただ一つの情報源 —
+   scissor 矩形と 1px もずれないようにするため、ここでは計算しない。
+*/
+
+#perspective-inset {
+  position: fixed;
+  right: var(--pv-inset-margin, 16px);
+  bottom: var(--pv-inset-margin, 16px);
+  z-index: 2;
+  width: var(--pv-inset-w, 280px);
+  height: var(--pv-inset-h, 205px);
+  padding: 0.5rem 0.7rem;
+  display: none;
+  flex-direction: column;
+  justify-content: space-between;
+  border: 1px solid rgba(232, 236, 251, 0.16);
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 34px rgba(5, 6, 15, 0.6),
+    0 10px 40px -18px rgba(5, 6, 15, 0.9);
+  pointer-events: none;
+  font-family: var(--font-mono);
+  line-height: 1;
+}
+
+#perspective-inset.is-visible {
+  display: flex;
+}
+
+.pv-inset-label {
+  font-size: 0.56rem;
+  letter-spacing: 0.24em;
+  color: rgba(151, 160, 196, 0.85);
+  text-shadow: 0 0 10px rgba(5, 6, 15, 0.95);
+}
+
+.pv-inset-readout {
+  align-self: flex-end;
+  padding: 0.22rem 0.5rem;
+  border-radius: 999px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+
+/* 解説キャプション。図形の下・画面中央に一行で置き、切り替え時だけフェードする */
+#perspective-caption {
+  position: fixed;
+  left: 50%;
+  bottom: clamp(1rem, 3vw, 2.4rem);
+  z-index: 2;
+  margin: 0;
+  transform: translateX(-50%);
+  max-width: min(46ch, calc(100vw - 2.5rem));
+  padding: 0.55rem 1.2rem;
+  border: 1px solid rgba(232, 236, 251, 0.1);
+  border-radius: 14px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  font-size: clamp(0.76rem, 0.72rem + 0.2vw, 0.88rem);
+  line-height: 1.85;
+  letter-spacing: 0.04em;
+  text-align: center;
+  color: var(--ink-body);
+  text-shadow: 0 0 18px rgba(5, 6, 15, 0.9);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity 0.22s ease,
+    visibility 0.22s;
+  pointer-events: none;
+}
+
+#perspective-caption.is-visible {
+  opacity: 1;
+  visibility: visible;
+}
+
+#perspective-caption.is-swapping {
+  opacity: 0;
+}
+
+/* 幅が足りない画面ではキャプションをインセットの上へ逃がす(重なり回避) */
+@media (max-width: 1080px) {
+  #perspective-caption {
+    bottom: calc(var(--pv-inset-h, 205px) + var(--pv-inset-margin, 16px) * 2);
+  }
+}
+
 /* ----------------------------------------------------------- レスポンシブ */
 
 @media (max-width: 860px) {

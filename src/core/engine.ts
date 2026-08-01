@@ -3,6 +3,12 @@ import { buildPostFX, type PostFX } from '../render/postfx';
 
 export type FrameCallback = (dt: number, t: number) => void;
 export type ResizeCallback = (width: number, height: number, pixelRatio: number) => void;
+/**
+ * composer のパスが終わった**後**に走る直描画コールバック。
+ * scissor/viewport を使った第2パス(perspective 展示の神視点インセット)専用の口で、
+ * 呼び出し側は自分で状態を保存・復帰する責務を負う(既知の罠 #10)。
+ */
+export type AfterRenderCallback = (renderer: THREE.WebGLRenderer) => void;
 
 /**
  * resolution を描画バッファサイズへ追従させる必要があるマテリアル。
@@ -53,6 +59,7 @@ export class Engine {
   private readonly canvas: HTMLCanvasElement;
   private readonly frameCallbacks: FrameCallback[] = [];
   private readonly resizeCallbacks: ResizeCallback[] = [];
+  private readonly afterRenderCallbacks: AfterRenderCallback[] = [];
   private readonly lineMaterials: ResolutionTrackingMaterial[] = [];
   /** 毎フレーム/リサイズで使い回す作業用ベクタ(ループ内アロケーション禁止) */
   private readonly bufferSize = new THREE.Vector2();
@@ -127,6 +134,14 @@ export class Engine {
   }
 
   /**
+   * composer.render() の直後に呼ばれる直描画パスを登録する。
+   * インセット等はポストFXを通さずに画面へ重ねたいのでここへ挿す。
+   */
+  onAfterRender(cb: AfterRenderCallback): void {
+    this.afterRenderCallbacks.push(cb);
+  }
+
+  /**
    * LineMaterial 等、resolution を描画バッファに追従させる必要のあるマテリアルを登録。
    * resize 時の更新漏れは既知の罠 #3 なので、必ずここへ集約する。
    */
@@ -164,6 +179,11 @@ export class Engine {
     }
 
     this.postfx.composer.render();
+
+    const afterRender = this.afterRenderCallbacks;
+    for (let i = 0; i < afterRender.length; i++) {
+      afterRender[i](this.renderer);
+    }
   };
 
   private readonly requestResize = (): void => {
