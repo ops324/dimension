@@ -10,6 +10,7 @@ import '@fontsource/zen-kaku-gothic-new/500.css';
 import '@fontsource/space-mono/400.css';
 import './style.css';
 
+import { Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { Engine } from './core/engine';
@@ -19,6 +20,7 @@ import { NarrativeScene } from './scenes/narrative';
 import { HopfExhibit } from './scenes/hopfExhibit';
 import { CliffordExhibit } from './scenes/cliffordExhibit';
 import { PolytopeExhibit } from './scenes/polytopeExhibit';
+import { PerspectiveExhibit, type CameraHint } from './scenes/perspectiveExhibit';
 import type { Exhibit } from './scenes/exhibit';
 import { CHAPTERS, CHAPTER_DIMS } from './ui/content';
 import { Overlays, buildNarrativeDOM } from './ui/overlays';
@@ -32,15 +34,29 @@ const engine = new Engine(canvas);
 const starfield = createStarfield();
 
 /**
- * 単独展示のブートパス(検証用)。?exhibit=hopf | clifford | polytope で物語を
- * 迂回して展示単体 + OrbitControls を起動する。Phase 7 の gallery が正式な導線に
+ * 単独展示のブートパス(検証用)。?exhibit=hopf | clifford | polytope | perspective で
+ * 物語を迂回して展示単体 + OrbitControls を起動する。Phase 7 の gallery が正式な導線に
  * なるまでの開発・レビュー用経路。
  */
-type StandaloneExhibit = 'hopf' | 'clifford' | 'polytope';
+type StandaloneExhibit = 'hopf' | 'clifford' | 'polytope' | 'perspective';
+
+/**
+ * カメラ誘導ヒントを無視する時間(ミリ秒)。
+ * ユーザーが OrbitControls に触れたら、その操作が終わってから 6 秒は
+ * こちらからカメラを動かさない(2 秒の「静止」条件はこれに含まれる)。
+ */
+const HINT_PAUSE_MS = 6000;
+/** ヒントへの追従速度(expSmooth)。~0.5 秒で寄る */
+const HINT_RATE = 3.2;
 
 const exhibitParam = new URLSearchParams(window.location.search).get('exhibit');
 
-if (exhibitParam === 'hopf' || exhibitParam === 'clifford' || exhibitParam === 'polytope') {
+if (
+  exhibitParam === 'hopf' ||
+  exhibitParam === 'clifford' ||
+  exhibitParam === 'polytope' ||
+  exhibitParam === 'perspective'
+) {
   bootStandaloneExhibit(exhibitParam);
 } else {
   bootNarrative();
@@ -60,18 +76,23 @@ function bootStandaloneExhibit(kind: StandaloneExhibit): void {
       ? new HopfExhibit()
       : kind === 'clifford'
         ? new CliffordExhibit()
-        : new PolytopeExhibit();
+        : kind === 'perspective'
+          ? new PerspectiveExhibit()
+          : new PolytopeExhibit();
   exhibit.init({ engine });
   exhibit.scene.add(starfield.group);
   engine.setScene(exhibit.scene);
 
   // Hopf の既定分布は半径 ~4 の入れ子トーラス束。斜め上から構造が読める位置に置く。
   // Clifford の静止像は半径 ~2.4 に収まるが、歳差が極へ寄ると大きく膨らむので
-  // 少し引いた位置から(膨張は maxDistance まで引いて追える)
+  // 少し引いた位置から(膨張は maxDistance まで引いて追える)。
+  // Perspective は半径 ~2.4 に自動フィットするので、ほぼ正面のやや上から。
   if (kind === 'hopf') {
     engine.camera.position.set(3.4, 3.0, 7.6);
   } else if (kind === 'clifford') {
     engine.camera.position.set(3.0, 2.2, 6.5);
+  } else if (kind === 'perspective') {
+    engine.camera.position.set(0, 1.6, 7.2);
   } else {
     engine.camera.position.set(2.7, 1.9, 5.0);
   }
@@ -84,7 +105,32 @@ function bootStandaloneExhibit(kind: StandaloneExhibit): void {
   controls.maxDistance = kind === 'hopf' ? 40 : kind === 'clifford' ? 30 : 20;
   controls.enablePan = false;
 
+  /**
+   * 展示からのカメラ誘導(perspective の「2 次元世界ビュー」等)。
+   *
+   * OrbitControls は毎フレーム target からの相対位置を球座標で往復させるだけなので、
+   * update() の**前**に camera.position と controls.target を書き換えれば、その姿勢が
+   * そのまま維持される(操作を奪い合わない)。ユーザーが触ったらしばらく沈黙する。
+   */
+  const hint: CameraHint = { pos: new Vector3(), look: new Vector3() };
+  const perspective = exhibit instanceof PerspectiveExhibit ? exhibit : null;
+  let hintPausedUntil = 0;
+  if (perspective !== null) {
+    const pause = (): void => {
+      hintPausedUntil = performance.now() + HINT_PAUSE_MS;
+    };
+    controls.addEventListener('start', pause);
+    controls.addEventListener('end', pause);
+  }
+
   engine.onFrame((dt, t) => {
+    if (perspective !== null && performance.now() >= hintPausedUntil) {
+      if (perspective.getCameraHint(hint)) {
+        const k = 1 - Math.exp(-HINT_RATE * dt);
+        engine.camera.position.lerp(hint.pos, k);
+        controls.target.lerp(hint.look, k);
+      }
+    }
     controls.update();
     starfield.update(dt);
     exhibit.update(dt, t);
@@ -105,6 +151,8 @@ function bootStandaloneExhibit(kind: StandaloneExhibit): void {
         exhibit.update(dt, t);
       }
       engine.postfx.composer.render();
+      // engine.tick() と同じ順序で第2パス(神視点インセット)も進める
+      perspective?.renderInset(engine.renderer);
     };
     (window as unknown as Record<string, unknown>).__DIMENSION__ = {
       engine,
