@@ -12,6 +12,10 @@ import { PolytopeExhibit } from '../scenes/polytopeExhibit';
 import { PerspectiveExhibit, type CameraHint } from '../scenes/perspectiveExhibit';
 import { EXHIBIT_INFO, type ExhibitInfo } from '../ui/content';
 import { TransitionOverlay } from '../ui/components/TransitionOverlay';
+import { Tabs } from '../ui/components/Tabs';
+import { ExhibitHeader } from '../ui/components/ExhibitHeader';
+import { Drawer } from '../ui/components/Drawer';
+import { createHud, type Hud } from '../ui/components/Hud';
 
 /**
  * ギャラリーのモード状態機械(プラン3節)。
@@ -113,21 +117,19 @@ export class Gallery {
 
   private readonly exhibits = new Map<ExhibitId, Exhibit>();
   private readonly entries = new Map<ExhibitId, ExhibitEntry>();
-  private readonly tabs = new Map<ExhibitId, HTMLButtonElement>();
 
   private readonly rootEl: HTMLElement;
-  private readonly tabsEl: HTMLElement;
   private readonly panelRoot: HTMLElement;
   /** モード遷移の幕(Phase 9a で #mode-fade の単純な暗転から置き換え) */
   private readonly transition = new TransitionOverlay();
   private readonly drawerEl: HTMLElement;
-  private readonly drawerTitleEl: HTMLElement;
-  private readonly drawerBodyEl: HTMLElement;
-  private readonly headIndexEl: HTMLElement;
-  private readonly headEnEl: HTMLElement;
-  private readonly headJpEl: HTMLElement;
-  private readonly headTaglineEl: HTMLElement;
   private readonly aboutButton: HTMLButtonElement;
+
+  /** ギャラリークローム(Phase 9b でコンポーネント化) */
+  private readonly tabs: Tabs;
+  private readonly header: ExhibitHeader;
+  private readonly drawer: Drawer;
+  private readonly hud: Hud | null;
 
   private controls: OrbitControls | null = null;
   private perspective: PerspectiveExhibit | null = null;
@@ -158,16 +160,9 @@ export class Gallery {
     for (const entry of EXHIBIT_REGISTRY) this.entries.set(entry.id, entry);
 
     this.rootEl = requireEl('gallery');
-    this.tabsEl = requireEl('gallery-tabs');
     this.panelRoot = requireEl('gallery-panel');
     this.transition.mount(document.body);
     this.drawerEl = requireEl('gallery-drawer');
-    this.drawerTitleEl = requireEl('drawer-title');
-    this.drawerBodyEl = requireEl('drawer-body');
-    this.headIndexEl = requireEl('gallery-index');
-    this.headEnEl = requireEl('gallery-en');
-    this.headJpEl = requireEl('gallery-jp');
-    this.headTaglineEl = requireEl('gallery-tagline');
     this.aboutButton = requireEl('about-toggle') as HTMLButtonElement;
 
     const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -175,10 +170,39 @@ export class Gallery {
       this.reduceMotion = query.matches;
       query.addEventListener('change', (event) => {
         this.reduceMotion = event.matches;
+        this.tabs.setSmoothScroll(!event.matches);
       });
     }
 
-    this.buildTabs();
+    // パネルは展示が切り替わるたびに作り直される tabpanel。タブ側から
+    // aria-labelledby を張るので、ロールはここで一度だけ与えておく
+    this.panelRoot.setAttribute('role', 'tabpanel');
+
+    this.tabs = new Tabs({
+      container: requireEl('gallery-tabs'),
+      items: EXHIBIT_REGISTRY.map((entry) => {
+        const info = infoFor(entry.id);
+        return { id: entry.id, en: info.en, jp: info.jp };
+      }),
+      active: this.activeId,
+      panelId: 'gallery-panel',
+      smoothScroll: !this.reduceMotion,
+      onSelect: (id) => this.select(id as ExhibitId),
+    });
+
+    this.header = new ExhibitHeader(requireEl('gallery-head'));
+    this.drawer = new Drawer({
+      root: this.drawerEl,
+      onRequestClose: () => this.closeDrawer(),
+    });
+    this.hud = createHud();
+
+    // 行分割は幅に依存する。engine.onResize は 150ms デバウンス済みなので、
+    // ここでの組み直しは「リサイズが落ち着いたら 1 回」に収まる
+    this.engine.onResize(() => {
+      if (this.mode === 'gallery') this.header.remeasure();
+    });
+
     this.wireChrome();
   }
 
@@ -291,7 +315,10 @@ export class Gallery {
     if (next === undefined) return;
 
     this.active?.exit();
-    this.updateTabs(id);
+    // タブの下線と見出しは**押した瞬間に**動きはじめる ── 展示の差し替えを
+    // 待つ 380ms のあいだ、UI だけが先に次の展示を指している状態を作る
+    this.tabs.setActive(id);
+    this.header.beginExit();
 
     const swap = (): void => {
       this.switchTimer = 0;
@@ -400,37 +427,9 @@ export class Gallery {
     return controls;
   }
 
-  private buildTabs(): void {
-    const fragment = document.createDocumentFragment();
-    for (const entry of EXHIBIT_REGISTRY) {
-      const info = infoFor(entry.id);
-      const tab = document.createElement('button');
-      tab.type = 'button';
-      tab.className = 'gal-tab';
-      tab.dataset.exhibit = entry.id;
-      tab.setAttribute('role', 'tab');
-      tab.setAttribute('aria-selected', entry.id === this.activeId ? 'true' : 'false');
-      tab.classList.toggle('is-active', entry.id === this.activeId);
-
-      const en = document.createElement('span');
-      en.className = 'gal-tab-en';
-      en.textContent = info.en;
-      const jp = document.createElement('span');
-      jp.className = 'gal-tab-jp';
-      jp.textContent = info.jp;
-      tab.append(en, jp);
-
-      tab.addEventListener('click', () => this.select(entry.id));
-      fragment.append(tab);
-      this.tabs.set(entry.id, tab);
-    }
-    this.tabsEl.replaceChildren(fragment);
-  }
-
   /** トップナビ・解説トグル・CTA 以外の常設操作をつなぐ */
   private wireChrome(): void {
     this.aboutButton.addEventListener('click', () => this.toggleDrawer());
-    document.getElementById('drawer-close')?.addEventListener('click', () => this.closeDrawer());
 
     for (const button of document.querySelectorAll<HTMLButtonElement>('#mode-nav [data-mode]')) {
       button.addEventListener('click', () => {
@@ -441,7 +440,7 @@ export class Gallery {
 
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && this.mode === 'gallery') {
-        if (this.drawerEl.classList.contains('is-open')) this.closeDrawer();
+        if (this.drawer.isOpen) this.closeDrawer();
         else this.exitGallery();
       }
     });
@@ -493,41 +492,22 @@ export class Gallery {
     exhibit.buildPanel(this.panelRoot);
   }
 
-  /** ヘッダ・解説ドロワーの中身を差し替える(状態変化時のみの DOM 書き込み) */
+  /**
+   * ヘッダ・解説ドロワー・計器の中身を差し替える(状態変化時のみの DOM 書き込み)。
+   * 見出しの振り付け(番号のフェード → 英字名の文字送り → 日本語名と一文)は
+   * ExhibitHeader が持つ ── ここは「どの展示か」を渡すだけ。
+   */
   private applyInfo(id: ExhibitId): void {
     const info = infoFor(id);
-    const index = EXHIBIT_REGISTRY.findIndex((entry) => entry.id === id);
-    this.headIndexEl.textContent = `EXHIBIT ${String(index + 1).padStart(2, '0')}`;
-    this.headEnEl.textContent = info.en;
-    this.headJpEl.textContent = info.jp;
-    this.headTaglineEl.textContent = info.tagline;
-    this.drawerTitleEl.textContent = `${info.jp} / ${info.en}`;
-    // 解説は content.ts の定数のみ(外部入力は入らない)
-    this.drawerBodyEl.innerHTML = info.explanation;
-    this.updateTabs(id);
+    const total = EXHIBIT_REGISTRY.length;
+    const index = EXHIBIT_REGISTRY.findIndex((entry) => entry.id === id) + 1;
+
+    this.header.apply({ index, total, en: info.en, jp: info.jp, tagline: info.tagline });
+    this.drawer.setContent(`${info.jp} / ${info.en}`, info.explanation);
+    this.hud?.setExhibit(index, total);
+    this.tabs.setActive(id);
     // perspective の神視点インセットとパネルが重ならないよう、モードを CSS へ伝える
     this.rootEl.dataset.exhibit = id;
-  }
-
-  private updateTabs(id: ExhibitId): void {
-    let activeTab: HTMLButtonElement | null = null;
-    for (const [key, tab] of this.tabs) {
-      const active = key === id;
-      tab.classList.toggle('is-active', active);
-      tab.setAttribute('aria-selected', active ? 'true' : 'false');
-      if (active) activeTab = tab;
-    }
-
-    // モバイルではタブ帯が横スクロールする。選択されたタブを必ず見える位置へ。
-    // scrollIntoView は祖先まで巻き込むので、この容器の scrollLeft だけを動かす
-    const track = this.tabsEl;
-    if (activeTab !== null && track.scrollWidth > track.clientWidth) {
-      const left = activeTab.offsetLeft - (track.clientWidth - activeTab.offsetWidth) / 2;
-      track.scrollTo({
-        left: left > 0 ? left : 0,
-        behavior: this.reduceMotion ? 'auto' : 'smooth',
-      });
-    }
   }
 
   private updateNavState(): void {
@@ -539,23 +519,25 @@ export class Gallery {
   }
 
   private toggleDrawer(): void {
-    if (this.drawerEl.classList.contains('is-open')) this.closeDrawer();
+    if (this.drawer.isOpen) this.closeDrawer();
     else this.openDrawer();
   }
 
   private openDrawer(): void {
-    this.drawerEl.classList.add('is-open');
-    this.drawerEl.setAttribute('aria-hidden', 'false');
+    this.drawer.show();
     this.aboutButton.setAttribute('aria-expanded', 'true');
     // モバイルではドロワーが全画面シートになり、トップナビと重なる
     document.body.classList.add('drawer-open');
   }
 
   private closeDrawer(): void {
-    this.drawerEl.classList.remove('is-open');
-    this.drawerEl.setAttribute('aria-hidden', 'true');
+    if (!this.drawer.isOpen) return;
+    // 閉じたあとフォーカスが宙に浮かないよう、**中にいたときだけ**呼び出し元へ返す
+    const returning = this.drawerEl.contains(document.activeElement);
+    this.drawer.hide();
     this.aboutButton.setAttribute('aria-expanded', 'false');
     document.body.classList.remove('drawer-open');
+    if (returning) this.aboutButton.focus({ preventScroll: true });
   }
 }
 

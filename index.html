@@ -67,13 +67,20 @@
       </section>
     </main>
 
-    <!-- HUD レイヤ。次元カウンタの値は overlays.ts が毎フレーム更新する -->
+    <!--
+      HUD レイヤ。次元カウンタの値は overlays.ts が毎フレーム更新する。
+      ギャラリーモードでは同じ場所に「EXHIBIT 02 / 04」が入れ替わりで立つ
+      (器は src/ui/components/Hud.ts が足し、どちらを見せるかは CSS が決める)。
+      .hud-row は高さ 34px のピルの中で、数字とラベルのベースラインを揃える器。
+    -->
     <div id="hud" aria-hidden="true">
       <div class="hud-dim">
-        <span class="hud-value" id="hud-value">0.00</span>
-        <span class="hud-unit">D</span>
-        <span class="hud-sep"></span>
-        <span class="hud-word" id="hud-word">DIMENSION</span>
+        <span class="hud-row">
+          <span class="hud-value" id="hud-value">0.00</span>
+          <span class="hud-unit">D</span>
+          <span class="hud-sep"></span>
+          <span class="hud-word" id="hud-word">DIMENSION</span>
+        </span>
       </div>
     </div>
 
