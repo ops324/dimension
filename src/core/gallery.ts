@@ -548,6 +548,9 @@ export class Gallery {
     if (this.tapId !== event.pointerId) return;
     this.tapId = -1;
     if (this.mode !== 'gallery' || this.busy || this.drawer.isOpen) return;
+    // タップでの没入切替はタッチのみ。マウスのクリックは OrbitControls の
+    // 慣性停止と衝突して誤爆する(レビュー判断) — デスクトップはアイチップで
+    if (event.pointerType !== 'touch') return;
     if (event.timeStamp - this.tapAt > TAP_MS) return;
     const dx = event.clientX - this.tapX;
     const dy = event.clientY - this.tapY;
