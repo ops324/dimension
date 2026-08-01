@@ -10,51 +10,88 @@ import '@fontsource/zen-kaku-gothic-new/500.css';
 import '@fontsource/space-mono/400.css';
 import './style.css';
 
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-
 import { Engine } from './core/engine';
+import { ScrollDirector } from './core/scrollDirector';
 import { createStarfield } from './render/starfield';
-import { PolytopeExhibit } from './scenes/polytopeExhibit';
+import { NarrativeScene } from './scenes/narrative';
+import { CHAPTERS, CHAPTER_DIMS } from './ui/content';
+import { Overlays, buildNarrativeDOM } from './ui/overlays';
 
 const canvas = document.getElementById('gl');
 if (!(canvas instanceof HTMLCanvasElement)) {
   throw new Error('DIMENSION: #gl canvas element not found');
 }
 
+const narrativeRoot = document.getElementById('narrative');
+if (!(narrativeRoot instanceof HTMLElement)) {
+  throw new Error('DIMENSION: #narrative container not found');
+}
+
+// キャンバスの pointer-events を切る(物語モードではスクロールだけが入力)
+document.body.classList.add('mode-narrative');
+
+// 1) DOM: index.html の静的プロローグを content.ts 由来の全章で置き換える
+const dom = buildNarrativeDOM(narrativeRoot, CHAPTERS);
+
+// 2) スクロール → (章, 章内進捗, dimLevel)。スクロールリスナーは張らない
+const scrollDirector = new ScrollDirector(dom.sections, CHAPTER_DIMS);
+
+// 3) レンダリング
 const engine = new Engine(canvas);
 
-// Phase 2 は polytope 展示の単独表示。物語シーンとギャラリー切替は Phase 3 / 7。
-const exhibit = new PolytopeExhibit();
-exhibit.init({ engine });
+const narrative = new NarrativeScene(scrollDirector);
+narrative.init({ engine });
 
 // starfield は共有オブジェクト。アクティブなシーンへ add() で付け替える(背景の連続性)
 const starfield = createStarfield();
-exhibit.scene.add(starfield.group);
+narrative.scene.add(starfield.group);
 
-engine.setScene(exhibit.scene);
+engine.setScene(narrative.scene);
 
-// 正面(+z 軸上)からだと軸に揃った多胞体が「トンネル」に潰れて構造が読めない。
-// 距離は engine 既定の 6 のまま、3/4 ビューになる位置へ寄せる。
-engine.camera.position.set(2.7, 1.9, 5.0);
-engine.camera.lookAt(0, 0, 0);
+// 4) テキストオーバーレイ(フェード・HUD・進捗バー・CTA)
+const overlays = new Overlays({ director: scrollDirector, chapters: CHAPTERS, dom });
 
-const controls = new OrbitControls(engine.camera, canvas);
-controls.enableDamping = true;
-controls.dampingFactor = 0.08;
-controls.minDistance = 2.5;
-controls.maxDistance = 20;
-controls.enablePan = false;
+// resize は engine が debounce(150ms)して配る。セクション高は svh 基準なので
+// アドレスバーの伸縮では変わらないが、回転や幅変更では必ず測り直す(既知の罠 #5)
+engine.onResize(() => scrollDirector.remeasure());
 
 engine.onFrame((dt, t) => {
-  controls.update();
+  scrollDirector.update(dt);
   starfield.update(dt);
-  exhibit.update(dt, t);
+  narrative.update(dt, t);
+  overlays.update();
 });
 
-exhibit.enter();
+narrative.enter();
 engine.start();
 
-// 開発時のみ: コンソールから形状を切り替えて視覚検証するためのフック
+// 開発時のみ: ヘッドレス検証用のフック。
+// ブラウザペインが非表示のときは rAF が止まりスクリーンショットが白/古いままに
+// なるため、合成フレームを手動で進めて 1 枚だけ描画できるようにしておく。
 if (import.meta.env.DEV) {
-  (window as unknown as Record<string, unknown>).__DIMENSION__ = { engine, exhibit };
+  const renderOnce = (steps = 1): number => {
+    const count = steps > 0 ? Math.floor(steps) : 1;
+    const dt = 1 / 60;
+    let t = engine.time;
+    for (let i = 0; i < count; i++) {
+      t += dt;
+      scrollDirector.update(dt);
+      starfield.update(dt);
+      narrative.update(dt, t);
+      overlays.update();
+    }
+    engine.postfx.composer.render();
+    return scrollDirector.dimLevel;
+  };
+
+  (window as unknown as Record<string, unknown>).__DIMENSION__ = {
+    engine,
+    narrative,
+    scrollDirector,
+    overlays,
+    /** 指定スクロール位置へ即座に飛ぶ(html { scroll-behavior: auto }) */
+    setScroll: (y: number): void => window.scrollTo(0, y),
+    /** 合成フレームを steps 回進めて 1 枚描画する。戻り値は到達した dimLevel */
+    renderOnce,
+  };
 }

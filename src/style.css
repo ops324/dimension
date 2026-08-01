@@ -1,6 +1,12 @@
-/* DIMENSION — base stylesheet
+/* DIMENSION — stylesheet
    フォントは main.ts が @fontsource から import する(CDN依存なし)。
-   ここではパレットとタイポグラフィの土台のみを定義する。 */
+
+   レイヤ構成(z-index):
+     0  #gl        全画面固定キャンバス(高次元ジオメトリ)
+     1  #narrative 物語テキスト(pointer-events: none / CTA だけ auto)
+     2  #hud       次元カウンタ
+     3  #progress  スクロール進捗バー
+*/
 
 :root {
   /* パレット(プラン5節) */
@@ -12,6 +18,7 @@
 
   /* 派生インク色 */
   --ink: #e8ecfb;
+  --ink-body: #c3cbe8;
   --ink-dim: #97a0c4;
   --line: rgba(232, 236, 251, 0.14);
   --glass: rgba(10, 12, 24, 0.55);
@@ -21,6 +28,11 @@
   --font-body: 'Zen Kaku Gothic New', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN',
     'Noto Sans JP', sans-serif;
   --font-mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* ディスプレイ英字が占めてよい画面幅。.ch-en のフォントサイズ算出に使う */
+  --display-fit: 84vw;
+  /* 章ピンの左右余白。カメラの構図と噛み合う値 */
+  --pin-gutter: clamp(1.35rem, 7vw, 7.5rem);
 }
 
 *,
@@ -31,6 +43,9 @@
 
 html {
   background: var(--bg);
+  /* スクロール駆動の物語なので慣性/スムーススクロールは入れない(プラン2節) */
+  scroll-behavior: auto;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -56,11 +71,462 @@ body {
   z-index: 0;
 }
 
-/* HUD レイヤ(中身は Phase 3 以降) */
+/* 物語モードではキャンバスは操作対象ではない(OrbitControls は Phase 7 のギャラリーで復活) */
+body.mode-narrative #gl {
+  pointer-events: none;
+}
+
+/* ---------------------------------------------------------------- 進捗バー */
+
+#progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  z-index: 3;
+  pointer-events: none;
+  background: rgba(232, 236, 251, 0.05);
+}
+
+#progress-bar {
+  height: 100%;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--cyan), var(--violet) 55%, var(--magenta));
+  box-shadow: 0 0 12px rgba(79, 216, 255, 0.45);
+}
+
+/* ------------------------------------------------------------------ 物語 */
+
+#narrative {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
+  /* フォント適用まで伏せる。overlays.ts が fonts.ready で body.fonts-ready を付ける */
+  opacity: 0;
+  transition: opacity 0.6s ease;
+}
+
+body.fonts-ready #narrative {
+  opacity: 1;
+}
+
+.chapter {
+  position: relative;
+}
+
+/* セクション高さ = スクラブ長。pin(100svh)を引いた残りが章の進行距離になる */
+.chapter[data-role='prologue'] {
+  height: 130svh;
+}
+
+.chapter[data-role='chapter'] {
+  height: 220svh;
+}
+
+.chapter[data-role='epilogue'] {
+  height: 170svh;
+}
+
+.pin {
+  position: sticky;
+  top: 0;
+  height: 100svh;
+  display: flex;
+  align-items: center;
+  padding-inline: var(--pin-gutter);
+  padding-block: clamp(3.5rem, 9vh, 7rem);
+}
+
+.chapter[data-align='left'] .pin {
+  justify-content: flex-start;
+}
+
+.chapter[data-align='right'] .pin {
+  justify-content: flex-end;
+  text-align: right;
+}
+
+/*
+  fit-content: ディスプレイ英字の実幅がそのままブロック幅になる。
+  右寄せの章でも英字の右端がガターに揃い、本文だけが 34ch で折り返す。
+*/
+.chapter-inner {
+  width: fit-content;
+  max-width: 100%;
+  opacity: 0;
+  transform: translate3d(0, var(--ty, 0px), 0);
+}
+
+/* ------------------------------------------------------- 章番号 / 見出し */
+
+.ch-index {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: 0 0 clamp(0.9rem, 2vh, 1.6rem);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 400;
+  letter-spacing: 0.32em;
+  line-height: 1;
+  color: var(--ink-dim);
+}
+
+.chapter[data-align='right'] .ch-index {
+  justify-content: flex-end;
+}
+
+.ch-rule {
+  width: clamp(2rem, 6vw, 4.5rem);
+  height: 1px;
+  background: linear-gradient(90deg, rgba(79, 216, 255, 0.55), rgba(79, 216, 255, 0.05));
+}
+
+.ch-index-dim {
+  color: var(--cyan);
+}
+
+/*
+  巨大ディスプレイ英字。
+  サイズは語長から決める: font-size ≈ 画面幅 / (文字数 × 0.98em)。
+  Unbounded 800 の実測平均字送りは 0.96em(字幅 ~0.82em + トラッキング 0.14em)で、
+  0.98 はそこへ 2% の安全余裕を足した値。どの語も常に --display-fit ぶんの幅に
+  収まり、折り返しも溢れも起きない。
+  最初の宣言は calc() を解釈できない環境向けのフォールバック。
+*/
+.ch-en {
+  margin: 0 0 clamp(0.7rem, 1.8vh, 1.3rem);
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: clamp(2.2rem, 11vw, 10rem);
+  font-size: clamp(2.2rem, calc(var(--display-fit) / (var(--len, 8) * 0.98)), 10rem);
+  line-height: 0.95;
+  letter-spacing: 0.14em;
+  margin-inline-end: -0.14em; /* 末尾トラッキングの視覚補正 */
+  white-space: nowrap;
+  color: var(--ink);
+  background-image: linear-gradient(
+    102deg,
+    #eef2ff 0%,
+    #9fdcff 34%,
+    #c2a6ff 66%,
+    #ff9fe0 100%
+  );
+  filter: drop-shadow(0 0 42px rgba(79, 216, 255, 0.16))
+    drop-shadow(0 0 90px rgba(157, 107, 255, 0.1));
+}
+
+@supports (-webkit-background-clip: text) or (background-clip: text) {
+  .ch-en {
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    opacity: 0.92;
+  }
+}
+
+.ch-title {
+  margin: 0 0 clamp(0.8rem, 2vh, 1.4rem);
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: clamp(1.05rem, 1.05rem + 0.6vw, 1.4rem);
+  line-height: 1.7;
+  letter-spacing: 0.1em;
+  color: var(--ink);
+  text-shadow: 0 0 20px rgba(5, 6, 15, 0.85);
+}
+
+.ch-body {
+  margin: 0;
+  max-width: 34ch;
+  font-size: clamp(0.88rem, 0.85rem + 0.22vw, 1rem);
+  font-weight: 400;
+  line-height: 2.1;
+  letter-spacing: 0.04em;
+  color: var(--ink-body);
+  text-shadow: 0 0 18px rgba(5, 6, 15, 0.9);
+}
+
+.chapter[data-align='right'] .ch-body {
+  margin-left: auto;
+}
+
+/* ------------------------------------------------------- 縦組みの飾り */
+
+.ch-caption {
+  position: absolute;
+  top: 50%;
+  right: clamp(0.9rem, 2.6vw, 2.6rem);
+  transform: translateY(-50%);
+  writing-mode: vertical-rl;
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 0.74rem;
+  letter-spacing: 0.45em;
+  color: rgba(151, 160, 196, 0.6);
+  text-shadow: 0 0 18px rgba(5, 6, 15, 0.9);
+}
+
+.chapter[data-align='right'] .ch-caption {
+  right: auto;
+  left: clamp(0.9rem, 2.6vw, 2.6rem);
+}
+
+.ch-caption::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: calc(100% + 1rem);
+  width: 1px;
+  height: clamp(2.5rem, 7vh, 5rem);
+  background: linear-gradient(to bottom, rgba(79, 216, 255, 0.4), rgba(79, 216, 255, 0));
+}
+
+/* --------------------------------------------------------- スクロール誘導 */
+
+.ch-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin: clamp(1.8rem, 5vh, 3.2rem) 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.62rem;
+  letter-spacing: 0.42em;
+  line-height: 1;
+  color: var(--ink-dim);
+}
+
+.ch-hint-rail {
+  position: relative;
+  width: 3.4rem;
+  height: 1px;
+  background: rgba(232, 236, 251, 0.16);
+  overflow: hidden;
+}
+
+.ch-hint-dot {
+  position: absolute;
+  inset-block: -1px;
+  width: 1.1rem;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  animation: hint-sweep 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes hint-sweep {
+  0% {
+    transform: translateX(-1.2rem);
+  }
+  60%,
+  100% {
+    transform: translateX(3.5rem);
+  }
+}
+
+/* ------------------------------------------------------------------ CTA */
+
+.cta {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.85rem;
+  margin-top: clamp(1.6rem, 4vh, 2.6rem);
+  padding: 0.8rem 1.9rem;
+  border: 1px solid rgba(79, 216, 255, 0.35);
+  border-radius: 999px;
+  background: rgba(10, 12, 24, 0.5);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  backdrop-filter: blur(12px) saturate(140%);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-weight: 500;
+  font-size: 0.92rem;
+  line-height: 1.4;
+  letter-spacing: 0.14em;
+  cursor: pointer;
+  transition:
+    border-color 0.25s ease,
+    background-color 0.25s ease,
+    color 0.25s ease,
+    box-shadow 0.35s ease,
+    transform 0.25s ease;
+}
+
+.cta:hover,
+.cta:focus-visible {
+  border-color: var(--cyan);
+  background-color: rgba(79, 216, 255, 0.1);
+  color: #eafbff;
+  box-shadow:
+    inset 0 0 0 1px rgba(79, 216, 255, 0.15),
+    0 14px 44px -14px rgba(79, 216, 255, 0.6);
+  transform: translateY(-2px);
+}
+
+.cta:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 4px;
+}
+
+.cta:active {
+  transform: translateY(0);
+}
+
+.cta-arrow {
+  font-family: var(--font-mono);
+  transition: transform 0.25s ease;
+}
+
+.cta:hover .cta-arrow,
+.cta:focus-visible .cta-arrow {
+  transform: translateX(5px);
+}
+
+/* ------------------------------------------------------------------ HUD */
+
 #hud {
   position: fixed;
   inset: 0;
   z-index: 2;
   pointer-events: none;
   font-family: var(--font-mono);
+}
+
+.hud-dim {
+  position: absolute;
+  left: clamp(1rem, 3vw, 2.4rem);
+  bottom: clamp(1rem, 3vw, 2.4rem);
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  padding: 0.5rem 1.05rem 0.55rem;
+  border: 1px solid rgba(232, 236, 251, 0.13);
+  border-radius: 999px;
+  background: var(--glass);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  line-height: 1;
+}
+
+.hud-value {
+  font-size: 1.02rem;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--cyan);
+  text-shadow: 0 0 16px rgba(79, 216, 255, 0.45);
+}
+
+.hud-unit {
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  color: rgba(79, 216, 255, 0.62);
+}
+
+.hud-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 0 0.4rem;
+  background: rgba(232, 236, 251, 0.16);
+}
+
+.hud-word {
+  font-size: 0.62rem;
+  letter-spacing: 0.24em;
+  color: var(--ink-dim);
+}
+
+/* ----------------------------------------------------------- レスポンシブ */
+
+@media (max-width: 860px) {
+  :root {
+    --display-fit: 88vw;
+    --pin-gutter: clamp(1.15rem, 5vw, 2rem);
+  }
+
+  /* モバイルは全章とも左寄せ(左右振り分けは横幅のある画面のリズム) */
+  .chapter[data-align='right'] .pin {
+    justify-content: flex-start;
+    text-align: left;
+  }
+
+  .chapter[data-align='right'] .ch-index {
+    justify-content: flex-start;
+  }
+
+  .chapter[data-align='right'] .ch-body {
+    margin-inline: 0;
+  }
+
+  .ch-body {
+    max-width: 30ch;
+  }
+
+  /*
+    可読性スクリム。
+    狭い画面では図形(常に画面中央)と本文が構造的に重なるため、ピンの中央帯だけを
+    落として文字を浮かせる。上下は 0 へ抜くので星空と作品の空気は残る。
+    #narrative が z-index:1 でスタッキングコンテキストを作っているので、
+    z-index:-1 はピンの内容の背面・キャンバス(z-index:0)の前面に入る。
+  */
+  .pin::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    pointer-events: none;
+    background: linear-gradient(
+      180deg,
+      rgba(5, 6, 15, 0) 0%,
+      rgba(5, 6, 15, 0.5) 18%,
+      rgba(5, 6, 15, 0.62) 50%,
+      rgba(5, 6, 15, 0.5) 82%,
+      rgba(5, 6, 15, 0) 100%
+    );
+  }
+}
+
+/* 縦組みの飾りは本文と衝突するので狭い画面では出さない */
+@media (max-width: 720px) {
+  .ch-caption {
+    display: none;
+  }
+}
+
+/* ------------------------------------------------- prefers-reduced-motion */
+
+@media (prefers-reduced-motion: reduce) {
+  /*
+    テキストの立ち上がりストロークを止める。overlays.ts 側でも rise=0 にするが、
+    インラインの custom property より作者スタイルの !important が優先されるため
+    JS の状態に依存せず必ず無効化できる。
+  */
+  .chapter-inner {
+    --ty: 0px !important;
+  }
+
+  #narrative {
+    transition: none;
+  }
+
+  .ch-hint-dot {
+    animation: none;
+    opacity: 0.6;
+  }
+
+  .cta,
+  .cta-arrow {
+    transition: none;
+  }
+
+  .cta:hover,
+  .cta:focus-visible,
+  .cta:active {
+    transform: none;
+  }
+
+  .cta:hover .cta-arrow,
+  .cta:focus-visible .cta-arrow {
+    transform: none;
+  }
 }
