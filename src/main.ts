@@ -25,6 +25,9 @@ import { Overlays, buildNarrativeDOM } from './ui/overlays';
 import { Preloader } from './ui/components/Preloader';
 import { createCursor } from './ui/components/Cursor';
 import { magnetize } from './ui/components/MagneticButton';
+import { createSoundToggle } from './ui/components/SoundToggle';
+import { audio } from './audio/engine';
+import { initAudioWiring, type AudioWiring } from './audio/wiring';
 
 const canvasEl = document.getElementById('gl');
 if (!(canvasEl instanceof HTMLCanvasElement)) {
@@ -61,6 +64,13 @@ const preloader = isStandalone
       },
     });
 preloader?.mount(document.body);
+
+/**
+ * 音(Phase 10)。**既定は無音**で、ここでするのは「最初のユーザー操作を
+ * 捕まえる網を張る」ことだけ ── AudioContext は、設定が ON で、かつ操作が
+ * 一度あったときに初めて生まれる(自動再生は決してしない)。
+ */
+audio.init();
 
 const engine = new Engine(canvas);
 const starfield = createStarfield();
@@ -117,6 +127,9 @@ function mountChrome(): void {
 
   const chip = document.querySelector<HTMLElement>('#quality .q-chip');
   if (chip !== null) magnetize(chip, { radius: 60, max: 5, labelMax: 7 });
+
+  // 音のチップ。品質チップの真下に座り、初回訪問だけ 2 回小さく脈打つ
+  createSoundToggle(document.body);
 }
 
 function bootStandaloneExhibit(kind: ExhibitId): void {
@@ -181,6 +194,9 @@ function bootStandaloneExhibit(kind: ExhibitId): void {
   exhibit.enter();
   engine.start();
 
+  // 単独展示にも操作音はつく(次元の鐘は物語だけなので scrollDirector は渡さない)
+  const wiring = initAudioWiring({ engine });
+
   if (import.meta.env.DEV) {
     let devClock = 0;
     const renderOnce = (steps = 1): void => {
@@ -205,6 +221,7 @@ function bootStandaloneExhibit(kind: ExhibitId): void {
       /** GradePass の on/off(グレイン・ビネット・ディザの before/after 比較用) */
       grade: (on: boolean): void => engine.postfx.setGradeEnabled(on),
       renderOnce,
+      audio: devAudioHooks(wiring),
     };
   }
 }
@@ -279,6 +296,13 @@ function bootNarrative(): void {
   narrative.enter();
   engine.start();
 
+  /**
+   * 音づけ。**この 1 行が音と作品の唯一の接点**で、既存のコンポーネントには
+   * 一行も足していない(委譲と CustomEvent だけで届く)。次元の鐘は
+   * scrollDirector.dimLevel の床を毎フレーム見て、跨いだ瞬間に撞かれる。
+   */
+  const wiring = initAudioWiring({ engine, scrollDirector });
+
   // 開発時のみ: ヘッドレス検証用のフック。
   // ブラウザペインが非表示のときは rAF が止まりスクリーンショットが白/古いままに
   // なるため、合成フレームを手動で進めて 1 枚だけ描画できるようにしておく。
@@ -299,6 +323,8 @@ function bootNarrative(): void {
           starfield.update(dt);
           narrative.update(dt, t);
           overlays.update();
+          // 次元の鐘も実ループと同じ順序で進める(engine.onFrame の写し)
+          wiring.step();
         }
       }
       devClock += count * dt;
@@ -327,6 +353,24 @@ function bootNarrative(): void {
       setScroll: (y: number): void => window.scrollTo(0, y),
       /** 合成フレームを steps 回進めて 1 枚描画する。戻り値は到達した dimLevel */
       renderOnce,
+      audio: devAudioHooks(wiring),
     };
   }
+}
+
+/**
+ * 音の検証フック(DEV のみ)。
+ *
+ * `render(name)` は実機と**同じ build 関数・同じ出力チェーン**を
+ * OfflineAudioContext へ通し、peak / rms / durMs / clipped を返す ──
+ * 耳で確かめられないものを数値で確かめるための唯一の道具。
+ * 動的 import なので、本番ビルドにはこの分岐ごと 1 バイトも残らない。
+ */
+function devAudioHooks(wiring: AudioWiring): Record<string, unknown> {
+  return {
+    engine: audio,
+    wiring,
+    render: async (name: string) => (await import('./audio/render')).render(name),
+    renderAll: async () => (await import('./audio/render')).renderAll(),
+  };
 }
