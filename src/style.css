@@ -1320,6 +1320,131 @@ body.has-gallery #mode-nav {
   outline-offset: 2px;
 }
 
+/* ------------------------------------------------------- 品質セレクタ
+
+   既定は右下(物語モードでは HUD が左下なので衝突しない)。
+   ギャラリーでは右ドックのパネルと重なるため左下へ逃がす。
+   畳んだ状態は「◈ AUTO」チップ 1 個だけ ── 作品の邪魔をしない大きさに保つ。
+*/
+
+#quality {
+  position: fixed;
+  right: clamp(1.1rem, 3.4vw, 3rem);
+  bottom: clamp(1rem, 3vw, 2.4rem);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.35rem;
+  font-family: var(--font-mono);
+}
+
+body.mode-gallery #quality {
+  right: auto;
+  left: clamp(1.1rem, 3.4vw, 3rem);
+  align-items: flex-start;
+}
+
+.q-chip {
+  padding: 0.32rem 0.75rem;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(10, 12, 24, 0.55);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    color 0.22s ease,
+    border-color 0.22s ease;
+}
+
+.q-chip:hover,
+#quality[data-open='true'] .q-chip {
+  color: var(--ink);
+  border-color: rgba(79, 216, 255, 0.32);
+}
+
+.q-chip:focus-visible,
+.q-opt:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* 実効解像度の読み。ホバーか展開時にだけ出す(quality.ts は変化時のみ書き込む) */
+.q-readout {
+  order: -2;
+  margin: 0;
+  padding: 0.28rem 0.7rem;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 10px;
+  background: rgba(10, 12, 24, 0.55);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  color: var(--ink-dim);
+  font-size: 0.5rem;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s ease;
+}
+
+#quality:hover .q-readout,
+#quality[data-open='true'] .q-readout {
+  opacity: 1;
+  visibility: visible;
+}
+
+.q-opts {
+  order: -1;
+  display: none;
+  gap: 0.2rem;
+  padding: 0.26rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(10, 12, 24, 0.55);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 18px 50px -30px rgba(0, 0, 0, 0.95);
+}
+
+#quality[data-open='true'] .q-opts {
+  display: flex;
+}
+
+.q-opt {
+  padding: 0.32rem 0.6rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 0.52rem;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    color 0.22s ease,
+    background-color 0.22s ease;
+}
+
+.q-opt:hover {
+  color: var(--ink);
+  background: rgba(232, 236, 251, 0.05);
+}
+
+.q-opt.is-active {
+  color: #eafbff;
+  background: rgba(79, 216, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(79, 216, 255, 0.28);
+}
+
 /* --------------------------------------------------- モード遷移の暗転 */
 
 #mode-fade {
@@ -1448,6 +1573,26 @@ body.has-gallery #mode-nav {
   body.drawer-open #mode-nav {
     display: none;
   }
+
+  /*
+    品質チップ: ギャラリーではパネルがボトムシート(最大 46svh)になるため、
+    その上へ逃がす。タップ標的として小さすぎないよう縦を確保する。
+  */
+  body.mode-gallery #quality {
+    left: 0.85rem;
+    bottom: calc(46svh + 0.6rem);
+  }
+
+  .q-chip {
+    min-height: 2rem;
+    padding: 0.42rem 0.9rem;
+    font-size: 0.58rem;
+  }
+
+  .q-opt {
+    min-height: 1.9rem;
+    padding: 0.4rem 0.7rem;
+  }
 }
 
 /* ----------------------------------------------------------- レスポンシブ */
@@ -1558,7 +1703,10 @@ body.has-gallery #mode-nav {
   .pn-switch,
   .pn-switch-knob,
   .gh-about,
-  .dw-close {
+  .dw-close,
+  .q-chip,
+  .q-opt,
+  .q-readout {
     transition: none;
   }
 
