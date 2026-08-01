@@ -9,6 +9,7 @@ import { projectOrtho, projectPerspective } from '../math/projection';
 import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
 import { CYAN, cosinePalette } from '../render/palette';
+import { createPanel } from '../ui/panel';
 
 import type { EngineCtx, Exhibit } from './exhibit';
 
@@ -284,9 +285,62 @@ export class PolytopeExhibit implements Exhibit {
     this.revealTarget = 0;
   }
 
-  /** 制御パネルは Phase 7(gallery)で実装する */
-  buildPanel(_root: HTMLElement): void {
-    // stub
+  /**
+   * 制御パネル(Phase 7)。族と n はどちらも形状の作り直しを伴うが、
+   * バッファは n=10 cube の最悪ケースで確保済みなので再確保は起きない。
+   */
+  buildPanel(root: HTMLElement): void {
+    const p = this.params;
+    const panel = createPanel(root, 'POLYTOPE EXPLORER');
+
+    const counts = panel.readout({ label: 'VERTICES / EDGES' });
+    const refresh = (): void => {
+      const poly = this.polytope;
+      if (poly !== null) counts(`${poly.vertexCount} / ${poly.edgeCount}`);
+    };
+    refresh();
+
+    panel.segmented({
+      label: 'FAMILY / 族',
+      options: [
+        ['cube', '超立方体'],
+        ['simplex', '単体'],
+        ['orthoplex', '正軸体'],
+      ],
+      value: p.family,
+      onSelect: (v) => {
+        this.setShape(v as PolytopeFamily, p.n);
+        refresh();
+      },
+    });
+
+    panel.slider({
+      label: 'N / 次元',
+      min: N_MIN,
+      max: N_MAX,
+      step: 1,
+      value: p.n,
+      onInput: (v) => {
+        this.setShape(p.family, v);
+        refresh();
+      },
+    });
+
+    panel.segmented({
+      label: 'PROJECTION / 投影',
+      options: [
+        ['perspective', '透視'],
+        ['ortho', '直交'],
+      ],
+      value: p.projection,
+      onSelect: (v) => this.setProjection(v as ProjectionMode),
+    });
+
+    panel.note(
+      '透視カスケードでは高次元の直線辺が三次元では曲線に映る ── ' +
+        'それが正しい像なので、辺を細分割して点ごとに投影している。' +
+        '色は投影で失われた最終軸の深さ。',
+    );
   }
 
   /** 形状の切り替え。事前確保済みバッファを再利用し、前計算だけをやり直す */

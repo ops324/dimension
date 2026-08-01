@@ -4,6 +4,7 @@ import { expSmooth } from '../math/ease';
 import type { PlaneRotation } from '../math/rotation';
 import { Line4DBatch } from '../render/line4d';
 import { cosinePalette } from '../render/palette';
+import { createPanel } from '../ui/panel';
 import type { EngineCtx, Exhibit } from './exhibit';
 
 export interface CliffordParams {
@@ -168,9 +169,85 @@ export class CliffordExhibit implements Exhibit {
     this.revealTarget = 0;
   }
 
-  /** 制御パネルは Phase 7(gallery)で実装する */
-  buildPanel(_root: HTMLElement): void {
-    // stub
+  /**
+   * 制御パネル(Phase 7)。u/v の格子密度は族ごとに独立で調整できる ──
+   * 片方だけを密にすると、二つの円族が別のものであることが一目で分かる。
+   */
+  buildPanel(root: HTMLElement): void {
+    const p = this.params;
+    const panel = createPanel(root, 'CLIFFORD TORUS');
+
+    panel.slider({
+      label: 'GRID U / u 円の本数',
+      min: 12,
+      max: MAX_GRID,
+      step: 4,
+      value: p.gridU,
+      onInput: (v) => this.setGrid(v, p.gridV),
+    });
+
+    panel.slider({
+      label: 'GRID V / v 円の本数',
+      min: 12,
+      max: MAX_GRID,
+      step: 4,
+      value: p.gridV,
+      onInput: (v) => this.setGrid(p.gridU, v),
+    });
+
+    panel.divider();
+
+    panel.toggle({
+      label: 'ISOCLINIC / 等傾回転',
+      value: p.isoclinic,
+      onChange: (v) => {
+        p.isoclinic = v;
+        panel.setDisabled('omega2', v);
+      },
+    });
+
+    panel.slider({
+      label: 'ω₁ / 平面 (0,1)',
+      min: 0,
+      max: 0.6,
+      step: 0.01,
+      value: p.omega1,
+      format: (v) => v.toFixed(2),
+      onInput: (v) => {
+        p.omega1 = v;
+      },
+    });
+
+    panel.slider({
+      key: 'omega2',
+      label: 'ω₂ / 平面 (2,3)',
+      min: 0,
+      max: 0.6,
+      step: 0.01,
+      value: p.omega2,
+      format: (v) => v.toFixed(2),
+      disabled: p.isoclinic,
+      onInput: (v) => {
+        p.omega2 = v;
+      },
+    });
+
+    panel.slider({
+      label: 'PRECESSION / 歳差 (0,3)',
+      min: 0,
+      max: 0.15,
+      step: 0.005,
+      value: p.precession,
+      format: (v) => v.toFixed(3),
+      onInput: (v) => {
+        p.precession = v;
+      },
+    });
+
+    panel.note(
+      '歳差角 γ = π/4 の付近でトーラスは投影の極を跨ぐ ── ' +
+        '像は無限へ膨れ上がり、通過した瞬間に内と外が入れ替わって裏返る。',
+    );
   }
 
   /** 格子密度の変更。ジオメトリを作り直して一括アップロードする */

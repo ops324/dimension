@@ -57,6 +57,54 @@
       </div>
     </div>
 
+    <!--
+      モード切替ナビ。初回のギャラリー入場までは出さない(body.has-gallery が付いてから)。
+      物語へ戻ったあとも残り、いつでも往復できる導線になる。
+    -->
+    <nav id="mode-nav" aria-label="モード切替">
+      <button type="button" class="nav-pill" data-mode="narrative">
+        <span class="nav-jp">物語</span><span class="nav-en">STORY</span>
+      </button>
+      <button type="button" class="nav-pill" data-mode="gallery">
+        <span class="nav-jp">ギャラリー</span><span class="nav-en">GALLERY</span>
+      </button>
+    </nav>
+
+    <!--
+      ギャラリーシェル。中身(タブ・パネル・解説)は src/core/gallery.ts が
+      展示レジストリと content.ts の EXHIBIT_INFO から構築する。
+      ここに置くのは器だけ ── 器の id が gallery.ts との契約になっている。
+    -->
+    <div id="gallery" hidden>
+      <div id="gallery-tabs" role="tablist" aria-label="展示の切り替え"></div>
+
+      <header id="gallery-head">
+        <p class="gh-index" id="gallery-index">EXHIBIT 01</p>
+        <h2 class="gh-en" id="gallery-en">HOPF FIBRATION</h2>
+        <p class="gh-jp" id="gallery-jp">ホップ・ファイブレーション</p>
+        <p class="gh-tagline" id="gallery-tagline"></p>
+        <button type="button" id="about-toggle" class="gh-about" aria-expanded="false">
+          <span class="gh-about-jp">解説</span>
+          <span class="gh-about-en">ABOUT THIS</span>
+        </button>
+      </header>
+
+      <div id="gallery-panel"></div>
+
+      <aside id="gallery-drawer" aria-hidden="true" aria-labelledby="drawer-title">
+        <div class="dw-head">
+          <h3 class="dw-title" id="drawer-title"></h3>
+          <button type="button" class="dw-close" id="drawer-close" aria-label="解説を閉じる">
+            ✕
+          </button>
+        </div>
+        <div class="dw-body" id="drawer-body"></div>
+      </aside>
+    </div>
+
+    <!-- モード遷移の暗転(250ms)。reduced-motion では transition を無効化する -->
+    <div id="mode-fade" aria-hidden="true"></div>
+
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
