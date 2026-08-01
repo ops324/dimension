@@ -18,6 +18,7 @@ import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
 import { CYAN, GOLD, MAGENTA, VIOLET } from '../render/palette';
 import { perspectiveCaption } from '../ui/content';
+import { createPanel } from '../ui/panel';
 
 import type { EngineCtx, Exhibit } from './exhibit';
 
@@ -429,9 +430,119 @@ export class PerspectiveExhibit implements Exhibit {
     this.applyVisibility();
   }
 
-  /** 制御パネルは Phase 7(gallery)で実装する */
-  buildPanel(_root: HTMLElement): void {
-    // stub
+  /**
+   * 制御パネル(Phase 7)。
+   *
+   * この展示だけは選択肢どうしに制約がある(m ≠ n / 高→低は X線俯瞰のみ)。
+   * 制約の判定は rebuild() が持つ唯一の実装(resolveMode と m≠n の強制)に任せ、
+   * パネルは **適用後の params を読み直して自分を合わせる**(sync)。
+   * UI 側で二重に規則を実装しないための設計 ── 禁じ手は無効状態として見せる。
+   */
+  buildPanel(root: HTMLElement): void {
+    const p = this.params;
+    const panel = createPanel(root, 'PERSPECTIVE');
+
+    const sync = (): void => {
+      panel.setValue('observer', String(p.observer));
+      panel.setValue('target', String(p.target));
+      panel.setValue('mode', p.mode);
+      for (let n = TARGET_MIN; n <= TARGET_MAX; n++) {
+        panel.setOptionDisabled('target', String(n), n === p.observer);
+      }
+      // 高 → 低(m > n)は X線俯瞰しかない。逆向きでは X線俯瞰が選べない
+      const looksDown = p.observer > p.target;
+      panel.setOptionDisabled('mode', 'slice', looksDown);
+      panel.setOptionDisabled('mode', 'shadow', looksDown);
+      panel.setOptionDisabled('mode', 'xray', !looksDown);
+    };
+
+    const preset = (
+      observer: number,
+      target: number,
+      mode: PerspectiveMode,
+      family: PerspectiveFamily,
+    ): void => {
+      this.params.family = family;
+      this.requestedMode = mode;
+      this.setPerspective(observer, target);
+      sync();
+    };
+
+    panel.note('PRESETS / 代表的な視点');
+    panel.button({
+      label: '2 次元人が立方体を見る',
+      onClick: () => preset(2, 3, 'slice', 'cube'),
+    });
+    panel.button({
+      label: '私たちがテッセラクトを見る',
+      onClick: () => preset(3, 4, 'slice', 'cube'),
+    });
+    panel.button({
+      label: '4 次元の目で見る',
+      onClick: () => preset(4, 3, 'xray', 'cube'),
+    });
+
+    panel.divider();
+
+    panel.segmented({
+      key: 'observer',
+      label: 'OBSERVER / 観測者 m',
+      options: [
+        ['2', '2 次元'],
+        ['3', '3 次元'],
+        ['4', '4 次元'],
+      ],
+      value: String(p.observer),
+      onSelect: (v) => {
+        this.setPerspective(Number(v), p.target);
+        sync();
+      },
+    });
+
+    panel.segmented({
+      key: 'target',
+      label: 'TARGET / 対象 n',
+      options: [
+        ['2', '2'],
+        ['3', '3'],
+        ['4', '4'],
+        ['5', '5'],
+        ['6', '6'],
+      ],
+      value: String(p.target),
+      onSelect: (v) => {
+        this.setPerspective(p.observer, Number(v));
+        sync();
+      },
+    });
+
+    panel.segmented({
+      key: 'mode',
+      label: 'MODE / 見えかた',
+      options: [
+        ['slice', '断面'],
+        ['shadow', '影'],
+        ['xray', 'X線俯瞰'],
+      ],
+      value: p.mode,
+      onSelect: (v) => {
+        this.setMode(v as PerspectiveMode);
+        sync();
+      },
+    });
+
+    panel.toggle({
+      label: 'ROTATE / 回転',
+      value: p.rotate,
+      onChange: (v) => this.setRotate(v),
+    });
+
+    panel.note(
+      '観測者と対象は同じ次元にできない(m ≠ n)。' +
+        'm < n では断面と影、m > n では X線俯瞰だけが意味を持つ ── 残りは無効表示になる。',
+    );
+
+    sync();
   }
 
   // --- 公開 API --------------------------------------------------------------

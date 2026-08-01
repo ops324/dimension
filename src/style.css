@@ -4,8 +4,11 @@
    レイヤ構成(z-index):
      0  #gl        全画面固定キャンバス(高次元ジオメトリ)
      1  #narrative 物語テキスト(pointer-events: none / CTA だけ auto)
-     2  #hud       次元カウンタ
+     2  #hud / #perspective-inset / #perspective-caption
      3  #progress  スクロール進捗バー
+     4  #gallery   ギャラリーシェル(タブ・ヘッダ・パネル・解説ドロワー)
+     5  #mode-nav  物語 ⇄ ギャラリーのトップナビ
+     6  #mode-fade モード遷移の暗転
 */
 
 :root {
@@ -535,6 +538,918 @@ body.fonts-ready #narrative {
   }
 }
 
+/* ------------------------------------------------------------- ギャラリー
+
+   モード切替の原則(プラン3節):
+   物語とギャラリーは**排他**。ギャラリーでは body のスクロールを殺し、
+   canvas を操作対象(pointer-events: auto / touch-action: none)に変える。
+   これで OrbitControls とページスクロールのホイール競合が構造的に起きない。
+*/
+
+body.mode-gallery {
+  overscroll-behavior: none;
+}
+
+body.mode-gallery #gl {
+  pointer-events: auto;
+  touch-action: none;
+}
+
+/* 物語のレイヤはギャラリー中は完全に伏せる(DOM は残す = 戻りが即時) */
+body.mode-gallery #narrative,
+body.mode-gallery #hud,
+body.mode-gallery #progress {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* ギャラリー中はキャプションの幅を詰めて右のパネルと衝突させない */
+body.mode-gallery #perspective-caption {
+  max-width: min(36ch, calc(100vw - 3rem));
+}
+
+#gallery {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+
+  --gal-gutter: clamp(1.1rem, 3.4vw, 3rem);
+  --gal-top: clamp(1rem, 2.6vh, 1.8rem);
+  --gal-panel-w: min(21rem, 30vw);
+  /* タブ帯の高さ + 余白。ヘッダとパネルの上端を揃える基準 */
+  --gal-shelf: 4.9rem;
+}
+
+#gallery[hidden] {
+  display: none;
+}
+
+#gallery > * {
+  pointer-events: auto;
+}
+
+/* ------------------------------------------------------------ 展示タブ */
+
+#gallery-tabs {
+  position: absolute;
+  top: var(--gal-top);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 0.28rem;
+  max-width: calc(100vw - 2rem);
+  padding: 0.3rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 14px;
+  background: rgba(10, 12, 24, 0.55);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 18px 50px -30px rgba(0, 0, 0, 0.95);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+#gallery-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.gal-tab {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.16rem;
+  padding: 0.48rem 0.95rem 0.44rem;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition:
+    color 0.22s ease,
+    background-color 0.22s ease,
+    border-color 0.22s ease,
+    box-shadow 0.28s ease;
+}
+
+.gal-tab-en {
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  letter-spacing: 0.2em;
+  line-height: 1;
+}
+
+.gal-tab-jp {
+  font-family: var(--font-body);
+  font-size: 0.56rem;
+  letter-spacing: 0.1em;
+  line-height: 1.2;
+  opacity: 0.7;
+}
+
+.gal-tab:hover {
+  color: var(--ink);
+  background: rgba(232, 236, 251, 0.05);
+}
+
+.gal-tab:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.gal-tab.is-active {
+  color: #eafbff;
+  border-color: rgba(79, 216, 255, 0.32);
+  background: rgba(79, 216, 255, 0.1);
+  box-shadow: 0 10px 30px -20px rgba(79, 216, 255, 0.9);
+}
+
+.gal-tab.is-active .gal-tab-en {
+  color: var(--cyan);
+}
+
+/* --------------------------------------------------------- 展示ヘッダ */
+
+#gallery-head {
+  position: absolute;
+  left: var(--gal-gutter);
+  top: calc(var(--gal-top) + var(--gal-shelf));
+  width: min(24rem, 34vw);
+  /* 文字の外側はキャンバスへ抜く(構図をドラッグで回せる) */
+  pointer-events: none;
+}
+
+.gh-index {
+  margin: 0 0 0.6rem;
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.34em;
+  line-height: 1;
+  color: var(--ink-dim);
+}
+
+.gh-en {
+  margin: 0 0 0.45rem;
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: clamp(1.25rem, 1.05rem + 1vw, 2.05rem);
+  line-height: 1.12;
+  letter-spacing: 0.11em;
+  color: var(--ink);
+  background-image: linear-gradient(102deg, #eef2ff 0%, #9fdcff 46%, #c2a6ff 100%);
+  filter: drop-shadow(0 0 32px rgba(79, 216, 255, 0.16));
+}
+
+@supports (-webkit-background-clip: text) or (background-clip: text) {
+  .gh-en {
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+}
+
+.gh-jp {
+  margin: 0 0 0.85rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.18em;
+  line-height: 1.6;
+  color: var(--ink-dim);
+  text-shadow: 0 0 18px rgba(5, 6, 15, 0.9);
+}
+
+.gh-tagline {
+  margin: 0 0 1.1rem;
+  max-width: 24ch;
+  font-size: 0.78rem;
+  line-height: 1.95;
+  letter-spacing: 0.04em;
+  color: var(--ink-body);
+  text-shadow: 0 0 18px rgba(5, 6, 15, 0.95);
+}
+
+.gh-about {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.42rem 1rem;
+  border: 1px solid rgba(232, 236, 251, 0.16);
+  border-radius: 999px;
+  background: rgba(10, 12, 24, 0.5);
+  -webkit-backdrop-filter: blur(12px) saturate(140%);
+  backdrop-filter: blur(12px) saturate(140%);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  line-height: 1.4;
+  cursor: pointer;
+  transition:
+    border-color 0.25s ease,
+    background-color 0.25s ease,
+    color 0.25s ease;
+}
+
+.gh-about:hover,
+.gh-about:focus-visible {
+  border-color: rgba(79, 216, 255, 0.6);
+  background: rgba(79, 216, 255, 0.1);
+  color: #eafbff;
+}
+
+.gh-about-en {
+  font-family: var(--font-mono);
+  font-size: 0.52rem;
+  letter-spacing: 0.2em;
+  color: var(--ink-dim);
+}
+
+/* --------------------------------------------------------- 制御パネル */
+
+#gallery-panel {
+  position: absolute;
+  right: var(--gal-gutter);
+  top: calc(var(--gal-top) + var(--gal-shelf));
+  bottom: clamp(1rem, 4vh, 2.4rem);
+  width: var(--gal-panel-w);
+  display: flex;
+  flex-direction: column;
+  /* パネルの下の余白はキャンバスへ抜く */
+  pointer-events: none;
+}
+
+#gallery-panel > .panel {
+  pointer-events: auto;
+}
+
+/* perspective の神視点インセット(右下)とパネルを縦に住み分けさせる */
+#gallery[data-exhibit='perspective'] #gallery-panel {
+  bottom: calc(var(--pv-inset-h, 205px) + var(--pv-inset-margin, 16px) * 2);
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  max-height: 100%;
+  min-height: 0;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 12px;
+  background: rgba(10, 12, 24, 0.55);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  box-shadow: 0 26px 64px -34px rgba(0, 0, 0, 0.95);
+  overflow: hidden;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  padding: 0.82rem 1rem 0.68rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.panel-title {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.6rem;
+  font-weight: 400;
+  letter-spacing: 0.24em;
+  line-height: 1;
+  color: var(--ink-dim);
+}
+
+/* グラブハンドルはモバイルのボトムシートでのみ現れる */
+.panel-grab {
+  display: none;
+}
+
+.panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.95rem;
+  padding: 0.95rem 1rem 1.15rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  transition:
+    max-height 0.3s ease,
+    padding 0.3s ease,
+    opacity 0.24s ease;
+}
+
+.panel-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.panel-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(232, 236, 251, 0.16);
+}
+
+/* ------------------------------------------------------- パネル部品 */
+
+.pn-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.pn-row.is-disabled {
+  opacity: 0.32;
+}
+
+.pn-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.6rem;
+}
+
+.pn-label {
+  font-family: var(--font-body);
+  font-size: 0.65rem;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+.pn-value {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--cyan);
+  text-shadow: 0 0 14px rgba(79, 216, 255, 0.4);
+}
+
+/* range: トラックは 2px の線、サムは発光する小さな玉 */
+.pn-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+.pn-range::-webkit-slider-runnable-track {
+  height: 2px;
+  border-radius: 2px;
+  background: linear-gradient(
+    90deg,
+    var(--cyan) 0 var(--fill, 0%),
+    rgba(232, 236, 251, 0.13) var(--fill, 0%) 100%
+  );
+}
+
+.pn-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -5px;
+  border-radius: 50%;
+  background: #eafbff;
+  box-shadow:
+    0 0 0 1px rgba(79, 216, 255, 0.5),
+    0 0 14px 2px rgba(79, 216, 255, 0.5);
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.pn-range:hover::-webkit-slider-thumb,
+.pn-range:focus-visible::-webkit-slider-thumb {
+  transform: scale(1.14);
+  box-shadow:
+    0 0 0 1px rgba(79, 216, 255, 0.8),
+    0 0 20px 4px rgba(79, 216, 255, 0.65);
+}
+
+.pn-range::-moz-range-track {
+  height: 2px;
+  border-radius: 2px;
+  background: rgba(232, 236, 251, 0.13);
+}
+
+.pn-range::-moz-range-progress {
+  height: 2px;
+  border-radius: 2px;
+  background: var(--cyan);
+}
+
+.pn-range::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: #eafbff;
+  box-shadow: 0 0 12px 2px rgba(79, 216, 255, 0.55);
+}
+
+.pn-range:disabled {
+  cursor: not-allowed;
+}
+
+.pn-range:focus-visible {
+  outline: 2px solid rgba(79, 216, 255, 0.7);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* segmented */
+.pn-seg {
+  display: flex;
+  gap: 0.22rem;
+  padding: 0.22rem;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.pn-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 0.42rem 0.3rem;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-family: var(--font-body);
+  font-size: 0.65rem;
+  font-weight: 400;
+  letter-spacing: 0.05em;
+  line-height: 1.3;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    background-color 0.2s ease,
+    box-shadow 0.24s ease;
+}
+
+.pn-seg-btn:hover:not(:disabled) {
+  color: var(--ink);
+  background: rgba(232, 236, 251, 0.06);
+}
+
+.pn-seg-btn.is-active {
+  color: #eafbff;
+  font-weight: 500;
+  background: rgba(79, 216, 255, 0.14);
+  box-shadow:
+    inset 0 0 0 1px rgba(79, 216, 255, 0.32),
+    0 8px 22px -16px rgba(79, 216, 255, 0.95);
+}
+
+.pn-seg-btn:disabled {
+  opacity: 0.26;
+  cursor: not-allowed;
+}
+
+.pn-seg-btn:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 1px;
+}
+
+/* toggle */
+.pn-row-toggle,
+.pn-row-readout {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.pn-switch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 42px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 999px;
+  background: rgba(232, 236, 251, 0.04);
+  cursor: pointer;
+  transition:
+    background-color 0.25s ease,
+    border-color 0.25s ease;
+}
+
+.pn-switch-knob {
+  position: absolute;
+  top: 50%;
+  left: 3px;
+  width: 14px;
+  height: 14px;
+  margin-top: -7px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  transition:
+    transform 0.25s cubic-bezier(0.4, 0, 0.2, 1),
+    background-color 0.25s ease,
+    box-shadow 0.25s ease;
+}
+
+.pn-switch.is-on {
+  border-color: rgba(79, 216, 255, 0.45);
+  background: rgba(79, 216, 255, 0.16);
+}
+
+.pn-switch.is-on .pn-switch-knob {
+  transform: translateX(20px);
+  background: #eafbff;
+  box-shadow: 0 0 14px 2px rgba(79, 216, 255, 0.65);
+}
+
+.pn-switch:disabled {
+  cursor: not-allowed;
+}
+
+.pn-switch:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 3px;
+}
+
+/* readout */
+.pn-readout-value {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  font-variant-numeric: tabular-nums;
+  color: var(--gold);
+}
+
+/* button */
+.pn-row-button {
+  gap: 0;
+}
+
+.pn-button {
+  width: 100%;
+  padding: 0.58rem 0.85rem;
+  border: 1px solid rgba(232, 236, 251, 0.13);
+  border-radius: 9px;
+  background: rgba(232, 236, 251, 0.03);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.7rem;
+  font-weight: 400;
+  letter-spacing: 0.07em;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.22s ease,
+    background-color 0.22s ease,
+    color 0.22s ease;
+}
+
+.pn-button:hover {
+  border-color: rgba(79, 216, 255, 0.5);
+  background: rgba(79, 216, 255, 0.08);
+  color: #eafbff;
+}
+
+.pn-button:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+.pn-divider {
+  height: 1px;
+  background: linear-gradient(90deg, rgba(232, 236, 251, 0.14), rgba(232, 236, 251, 0));
+}
+
+.pn-note {
+  margin: 0;
+  font-size: 0.62rem;
+  line-height: 1.9;
+  letter-spacing: 0.03em;
+  color: rgba(151, 160, 196, 0.78);
+}
+
+/* --------------------------------------------------------- 解説ドロワー */
+
+#gallery-drawer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: min(30rem, 46vw);
+  display: flex;
+  flex-direction: column;
+  padding: clamp(1.4rem, 4vh, 2.6rem) clamp(1.2rem, 3vw, 2.2rem);
+  border-right: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(6, 8, 18, 0.84);
+  -webkit-backdrop-filter: blur(22px) saturate(140%);
+  backdrop-filter: blur(22px) saturate(140%);
+  box-shadow: 40px 0 90px -60px rgba(0, 0, 0, 1);
+  transform: translateX(-100%);
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    transform 0.38s cubic-bezier(0.4, 0, 0.2, 1),
+    opacity 0.3s ease,
+    visibility 0.38s;
+}
+
+#gallery-drawer.is-open {
+  transform: none;
+  opacity: 1;
+  visibility: visible;
+}
+
+.dw-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.3rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid rgba(232, 236, 251, 0.1);
+}
+
+.dw-title {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  line-height: 1.7;
+  color: var(--ink);
+}
+
+.dw-close {
+  flex: 0 0 auto;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid rgba(232, 236, 251, 0.14);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-dim);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    border-color 0.2s ease,
+    background-color 0.2s ease;
+}
+
+.dw-close:hover {
+  color: #eafbff;
+  border-color: rgba(79, 216, 255, 0.5);
+  background: rgba(79, 216, 255, 0.08);
+}
+
+.dw-body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.5rem;
+}
+
+.dw-body::-webkit-scrollbar {
+  width: 6px;
+}
+
+.dw-body::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: rgba(232, 236, 251, 0.16);
+}
+
+.dw-body p {
+  margin: 0 0 1.4rem;
+  font-size: 0.82rem;
+  line-height: 2.15;
+  letter-spacing: 0.035em;
+  color: var(--ink-body);
+}
+
+.dw-body p:last-child {
+  margin-bottom: 0;
+}
+
+/* 数学用語・記号の強調。斜体にはせず、シアンで少しだけ持ち上げる */
+.dw-body em {
+  font-style: normal;
+  font-weight: 500;
+  color: var(--cyan);
+}
+
+.dw-body sup {
+  font-size: 0.68em;
+  vertical-align: super;
+  line-height: 0;
+}
+
+/* ------------------------------------------------------- トップナビ */
+
+#mode-nav {
+  position: fixed;
+  top: clamp(1rem, 2.6vh, 1.8rem);
+  right: clamp(1.1rem, 3.4vw, 3rem);
+  z-index: 5;
+  display: none;
+  gap: 0.25rem;
+  padding: 0.28rem;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  background: rgba(10, 12, 24, 0.55);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+}
+
+/* 初回のギャラリー入場までは存在しない導線 */
+body.has-gallery #mode-nav {
+  display: flex;
+}
+
+.nav-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.1rem;
+  padding: 0.4rem 0.9rem;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  transition:
+    color 0.22s ease,
+    background-color 0.22s ease,
+    box-shadow 0.24s ease;
+}
+
+.nav-jp {
+  font-family: var(--font-body);
+  font-size: 0.62rem;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  line-height: 1.2;
+}
+
+.nav-en {
+  font-family: var(--font-mono);
+  font-size: 0.48rem;
+  letter-spacing: 0.2em;
+  line-height: 1;
+  opacity: 0.65;
+}
+
+.nav-pill:hover {
+  color: var(--ink);
+  background: rgba(232, 236, 251, 0.05);
+}
+
+.nav-pill.is-active {
+  color: #eafbff;
+  background: rgba(79, 216, 255, 0.12);
+  box-shadow: inset 0 0 0 1px rgba(79, 216, 255, 0.28);
+}
+
+.nav-pill:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
+/* --------------------------------------------------- モード遷移の暗転 */
+
+#mode-fade {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  background: #03040a;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 250ms ease;
+}
+
+#mode-fade.is-on {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ------------------------------------------- ギャラリーのモバイル配置 */
+
+@media (max-width: 768px) {
+  #gallery {
+    --gal-gutter: 0.85rem;
+    /* ナビ(2.6rem)+ タブ帯(3.2rem)+ 余白ぶん下げてヘッダを置く */
+    --gal-shelf: 6.6rem;
+  }
+
+  /* 上から ナビ → タブ帯 → ヘッダ の順に積む(横に並べる幅がない) */
+  #gallery-tabs {
+    top: calc(var(--gal-top) + 2.9rem);
+    left: 0.6rem;
+    right: 0.6rem;
+    transform: none;
+    max-width: none;
+    border-radius: 12px;
+    justify-content: flex-start;
+  }
+
+  #gallery-head {
+    width: auto;
+    right: var(--gal-gutter);
+  }
+
+  .gh-tagline {
+    max-width: none;
+    font-size: 0.74rem;
+  }
+
+  /* パネルはボトムシート。グラブハンドル(ヘッダ全域)で開閉する */
+  #gallery-panel,
+  #gallery[data-exhibit='perspective'] #gallery-panel {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto;
+    width: auto;
+    max-height: 46svh;
+  }
+
+  #gallery-panel > .panel {
+    max-height: 46svh;
+    border-radius: 16px 16px 0 0;
+    border-bottom: 0;
+  }
+
+  .panel-head {
+    position: relative;
+    padding-top: 1.25rem;
+  }
+
+  .panel-grab {
+    display: block;
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    cursor: pointer;
+  }
+
+  .panel-grab-bar {
+    position: absolute;
+    top: 0.5rem;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 2.4rem;
+    height: 3px;
+    border-radius: 999px;
+    background: rgba(232, 236, 251, 0.28);
+  }
+
+  .panel-body {
+    max-height: calc(46svh - 3.6rem);
+  }
+
+  #gallery-panel.is-collapsed .panel-body {
+    max-height: 0;
+    padding-block: 0;
+    opacity: 0;
+    overflow: hidden;
+  }
+
+  /* 解説はフルシート(下から) */
+  #gallery-drawer {
+    width: 100%;
+    border-right: 0;
+    transform: translateY(100%);
+  }
+
+  #gallery-drawer.is-open {
+    transform: none;
+  }
+
+  #mode-nav {
+    top: clamp(0.8rem, 2vh, 1.4rem);
+    right: 0.85rem;
+  }
+
+  .nav-pill {
+    padding: 0.34rem 0.75rem;
+  }
+
+  /* 全画面シートの解説とトップナビは同じ場所を取り合う。解説が優先 */
+  body.drawer-open #mode-nav {
+    display: none;
+  }
+}
+
 /* ----------------------------------------------------------- レスポンシブ */
 
 @media (max-width: 860px) {
@@ -627,5 +1542,27 @@ body.fonts-ready #narrative {
   .cta:hover .cta-arrow,
   .cta:focus-visible .cta-arrow {
     transform: none;
+  }
+
+  /*
+    ギャラリー側も同じ方針: 暗転は即時、ドロワーとパネルの開閉はスナップ。
+    gallery.ts は待ち時間そのものを 0 にし、カメラのホーム復帰トゥイーンも飛ばす。
+  */
+  #mode-fade,
+  #gallery-drawer,
+  .panel-body,
+  .gal-tab,
+  .nav-pill,
+  .pn-seg-btn,
+  .pn-button,
+  .pn-switch,
+  .pn-switch-knob,
+  .gh-about,
+  .dw-close {
+    transition: none;
+  }
+
+  .pn-range::-webkit-slider-thumb {
+    transition: none;
   }
 }

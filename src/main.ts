@@ -15,30 +15,29 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { Engine } from './core/engine';
 import { ScrollDirector } from './core/scrollDirector';
+import { Gallery, EXHIBIT_REGISTRY, type ExhibitId } from './core/gallery';
 import { createStarfield } from './render/starfield';
 import { NarrativeScene } from './scenes/narrative';
-import { HopfExhibit } from './scenes/hopfExhibit';
-import { CliffordExhibit } from './scenes/cliffordExhibit';
-import { PolytopeExhibit } from './scenes/polytopeExhibit';
 import { PerspectiveExhibit, type CameraHint } from './scenes/perspectiveExhibit';
-import type { Exhibit } from './scenes/exhibit';
 import { CHAPTERS, CHAPTER_DIMS } from './ui/content';
 import { Overlays, buildNarrativeDOM } from './ui/overlays';
 
-const canvas = document.getElementById('gl');
-if (!(canvas instanceof HTMLCanvasElement)) {
+const canvasEl = document.getElementById('gl');
+if (!(canvasEl instanceof HTMLCanvasElement)) {
   throw new Error('DIMENSION: #gl canvas element not found');
 }
+// 明示的に型を確定させる: instanceof の絞り込みは下のクロージャまで届かない
+const canvas: HTMLCanvasElement = canvasEl;
 
 const engine = new Engine(canvas);
 const starfield = createStarfield();
 
 /**
- * 単独展示のブートパス(検証用)。?exhibit=hopf | clifford | polytope | perspective で
- * 物語を迂回して展示単体 + OrbitControls を起動する。Phase 7 の gallery が正式な導線に
- * なるまでの開発・レビュー用経路。
+ * 単独展示のブートパス(開発・回帰検証用)。?exhibit=hopf | clifford | polytope |
+ * perspective で物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。
+ * 生成そのものは gallery.ts の EXHIBIT_REGISTRY を通すので、展示クラスも
+ * カメラのホーム姿勢もギャラリー本線と完全に同一のものが使われる。
  */
-type StandaloneExhibit = 'hopf' | 'clifford' | 'polytope' | 'perspective';
 
 /**
  * カメラ誘導ヒントを無視する時間(ミリ秒)。
@@ -62,47 +61,32 @@ if (
   bootNarrative();
 }
 
-function bootStandaloneExhibit(kind: StandaloneExhibit): void {
+function bootStandaloneExhibit(kind: ExhibitId): void {
   document.body.classList.add('mode-gallery');
-  // 物語 DOM は不要なので隠す(スクロールも殺す)
-  const narrativeRoot = document.getElementById('narrative');
-  narrativeRoot?.remove();
+  // 物語 DOM もギャラリーシェルも不要なので落とす(スクロールも殺す)
+  document.getElementById('narrative')?.remove();
   document.getElementById('hud')?.remove();
   document.getElementById('progress')?.remove();
+  document.getElementById('gallery')?.remove();
+  document.getElementById('mode-nav')?.remove();
   document.body.style.overflow = 'hidden';
 
-  const exhibit: Exhibit =
-    kind === 'hopf'
-      ? new HopfExhibit()
-      : kind === 'clifford'
-        ? new CliffordExhibit()
-        : kind === 'perspective'
-          ? new PerspectiveExhibit()
-          : new PolytopeExhibit();
+  const entry = EXHIBIT_REGISTRY.find((e) => e.id === kind);
+  if (entry === undefined) throw new Error(`DIMENSION: 未知の展示 ${kind}`);
+
+  const exhibit = entry.create();
   exhibit.init({ engine });
   exhibit.scene.add(starfield.group);
   engine.setScene(exhibit.scene);
 
-  // Hopf の既定分布は半径 ~4 の入れ子トーラス束。斜め上から構造が読める位置に置く。
-  // Clifford の静止像は半径 ~2.4 に収まるが、歳差が極へ寄ると大きく膨らむので
-  // 少し引いた位置から(膨張は maxDistance まで引いて追える)。
-  // Perspective は半径 ~2.4 に自動フィットするので、ほぼ正面のやや上から。
-  if (kind === 'hopf') {
-    engine.camera.position.set(3.4, 3.0, 7.6);
-  } else if (kind === 'clifford') {
-    engine.camera.position.set(3.0, 2.2, 6.5);
-  } else if (kind === 'perspective') {
-    engine.camera.position.set(0, 1.6, 7.2);
-  } else {
-    engine.camera.position.set(2.7, 1.9, 5.0);
-  }
+  engine.camera.position.set(entry.home[0], entry.home[1], entry.home[2]);
   engine.camera.lookAt(0, 0, 0);
 
   const controls = new OrbitControls(engine.camera, canvas);
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
-  controls.minDistance = 2.5;
-  controls.maxDistance = kind === 'hopf' ? 40 : kind === 'clifford' ? 30 : 20;
+  controls.minDistance = entry.minDistance;
+  controls.maxDistance = entry.maxDistance;
   controls.enablePan = false;
 
   /**
@@ -140,16 +124,18 @@ function bootStandaloneExhibit(kind: StandaloneExhibit): void {
   engine.start();
 
   if (import.meta.env.DEV) {
+    let devClock = 0;
     const renderOnce = (steps = 1): void => {
       const count = steps > 0 ? Math.floor(steps) : 1;
       const dt = 1 / 60;
-      let t = engine.time;
+      let t = engine.time + devClock;
       for (let i = 0; i < count; i++) {
         t += dt;
         controls.update();
         starfield.update(dt);
         exhibit.update(dt, t);
       }
+      devClock += count * dt;
       engine.postfx.composer.render();
       // engine.tick() と同じ順序で第2パス(神視点インセット)も進める
       perspective?.renderInset(engine.renderer);
@@ -188,11 +174,33 @@ function bootNarrative(): void {
   // 4) テキストオーバーレイ(フェード・HUD・進捗バー・CTA)
   const overlays = new Overlays({ director: scrollDirector, chapters: CHAPTERS, dom });
 
+  /**
+   * 5) ギャラリーは**初回入場時に初めて構築する**。
+   * 4 展示ぶんのバッファ(Hopf 1200×192 線分ほか)を起動時に確保しないことで、
+   * 初期ロードは物語だけの軽さのまま保たれる。
+   */
+  let gallery: Gallery | null = null;
+  const ensureGallery = (): Gallery => {
+    if (gallery === null) {
+      gallery = new Gallery({ engine, canvas, starfield, narrative, scrollDirector });
+    }
+    return gallery;
+  };
+  window.addEventListener('dimension:enter-gallery', () => {
+    ensureGallery().enterGallery();
+  });
+
   // resize は engine が debounce(150ms)して配る。セクション高は svh 基準なので
   // アドレスバーの伸縮では変わらないが、回転や幅変更では必ず測り直す(既知の罠 #5)
   engine.onResize(() => scrollDirector.remeasure());
 
+  // モードで駆動対象を丸ごと切り替える。ギャラリー中は scrollDirector も
+  // narrative も overlays も一切走らない(プラン3節)
   engine.onFrame((dt, t) => {
+    if (gallery !== null && gallery.isGallery) {
+      gallery.update(dt, t);
+      return;
+    }
     scrollDirector.update(dt);
     starfield.update(dt);
     narrative.update(dt, t);
@@ -206,18 +214,28 @@ function bootNarrative(): void {
   // ブラウザペインが非表示のときは rAF が止まりスクリーンショットが白/古いままに
   // なるため、合成フレームを手動で進めて 1 枚だけ描画できるようにしておく。
   if (import.meta.env.DEV) {
+    let devClock = 0;
+    /** 合成フレームを steps 回進めて 1 枚描画する。**いま有効なモードだけ**を進める */
     const renderOnce = (steps = 1): number => {
       const count = steps > 0 ? Math.floor(steps) : 1;
       const dt = 1 / 60;
-      let t = engine.time;
+      let t = engine.time + devClock;
+      const inGallery = gallery !== null && gallery.isGallery;
       for (let i = 0; i < count; i++) {
         t += dt;
-        scrollDirector.update(dt);
-        starfield.update(dt);
-        narrative.update(dt, t);
-        overlays.update();
+        if (inGallery && gallery !== null) {
+          gallery.update(dt, t);
+        } else {
+          scrollDirector.update(dt);
+          starfield.update(dt);
+          narrative.update(dt, t);
+          overlays.update();
+        }
       }
+      devClock += count * dt;
       engine.postfx.composer.render();
+      // engine.tick() と同じ順序で第2パス(perspective の神視点インセット)も進める
+      if (inGallery && gallery !== null) gallery.afterRender(engine.renderer);
       return scrollDirector.dimLevel;
     };
 
@@ -226,6 +244,13 @@ function bootNarrative(): void {
       narrative,
       scrollDirector,
       overlays,
+      /** 初回入場までは null(遅延生成) */
+      get gallery(): Gallery | null {
+        return gallery;
+      },
+      /** 検証から直接モードを叩くための口 */
+      enterGallery: (): void => ensureGallery().enterGallery(),
+      exitGallery: (): void => gallery?.exitGallery(),
       /** 指定スクロール位置へ即座に飛ぶ(html { scroll-behavior: auto }) */
       setScroll: (y: number): void => window.scrollTo(0, y),
       /** 合成フレームを steps 回進めて 1 枚描画する。戻り値は到達した dimLevel */

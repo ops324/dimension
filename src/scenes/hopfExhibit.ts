@@ -10,6 +10,7 @@ import {
 } from '../math/hopf';
 import { Line4DBatch } from '../render/line4d';
 import { cosinePalette } from '../render/palette';
+import { createPanel } from '../ui/panel';
 import type { EngineCtx, Exhibit } from './exhibit';
 
 export type HopfDistribution = 'rings' | 'great' | 'fibonacci';
@@ -142,9 +143,87 @@ export class HopfExhibit implements Exhibit {
     this.revealTarget = 0;
   }
 
-  /** 制御パネルは Phase 7(gallery)で実装する */
-  buildPanel(_root: HTMLElement): void {
-    // stub
+  /**
+   * 制御パネル(Phase 7)。ω₂ は等傾回転のとき ω₁ に置き換わるので、
+   * トグルに連動して**無効状態を視覚的にも見せる**(値は残す = 解除で戻る)。
+   */
+  buildPanel(root: HTMLElement): void {
+    const p = this.params;
+    const panel = createPanel(root, 'HOPF FIBRATION');
+
+    panel.slider({
+      label: 'FIBERS / ファイバー数',
+      min: 24,
+      max: MAX_FIBERS,
+      step: 12,
+      value: p.fiberCount,
+      onInput: (v) => this.setDistribution(p.distribution, v),
+    });
+
+    panel.segmented({
+      label: 'DISTRIBUTION / 分布',
+      options: [
+        ['rings', '緯線'],
+        ['great', '大円'],
+        ['fibonacci', 'フィボナッチ'],
+      ],
+      value: p.distribution,
+      onSelect: (v) => this.setDistribution(v as HopfDistribution, p.fiberCount),
+    });
+
+    panel.divider();
+
+    panel.toggle({
+      label: 'ISOCLINIC / 等傾回転',
+      value: p.isoclinic,
+      onChange: (v) => {
+        p.isoclinic = v;
+        panel.setDisabled('omega2', v);
+      },
+    });
+
+    panel.slider({
+      label: 'ω₁ / 平面 (0,1)',
+      min: 0,
+      max: 0.6,
+      step: 0.01,
+      value: p.omega1,
+      format: (v) => v.toFixed(2),
+      onInput: (v) => {
+        p.omega1 = v;
+      },
+    });
+
+    panel.slider({
+      key: 'omega2',
+      label: 'ω₂ / 平面 (2,3)',
+      min: 0,
+      max: 0.6,
+      step: 0.01,
+      value: p.omega2,
+      format: (v) => v.toFixed(2),
+      disabled: p.isoclinic,
+      onInput: (v) => {
+        p.omega2 = v;
+      },
+    });
+
+    panel.slider({
+      label: 'PRECESSION / 歳差',
+      min: 0,
+      max: 0.2,
+      step: 0.005,
+      value: p.precession,
+      format: (v) => v.toFixed(3),
+      onInput: (v) => {
+        p.precession = v;
+      },
+    });
+
+    panel.note(
+      '投影の極(w→1)を跨ぐファイバーは画面を横断する長大な線分になるため、' +
+        '頂点シェーダー内で縮退させて消している。極付近の「途切れ」はその跡。',
+    );
   }
 
   /** 分布・本数の変更。ジオメトリを作り直して一括アップロードする */

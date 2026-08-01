@@ -291,8 +291,7 @@ export class Overlays {
   };
 
   private readonly handleCtaClick = (): void => {
-    // Phase 7 の gallery がこのイベントを購読してモード遷移する
+    // main.ts がこのイベントを購読し、gallery を遅延生成してモード遷移する
     window.dispatchEvent(new CustomEvent('dimension:enter-gallery'));
-    console.info('[narrative] enter-gallery requested (gallery arrives in Phase 7)');
   };
 }
