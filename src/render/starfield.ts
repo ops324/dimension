@@ -4,6 +4,18 @@ export interface Starfield {
   /** アクティブなシーンへ add() して使い回す共有オブジェクト */
   readonly group: THREE.Group;
   update(dt: number): void;
+  /**
+   * 描画バッファ倍率の変更に uPixelRatio を追従させる。
+   * これを怠ると DPR を上げたときに星が CSS ピクセル基準の大きさのまま縮む
+   * (生成時の値を握りっぱなしにする実装の典型的な罠)。
+   */
+  setPixelRatio(ratio: number): void;
+  /**
+   * 星の密度スケール(1 = 全 3 層 / 0.5 = 手前の層だけ)。
+   * 個々の Points の中身は触らず、遠い層から visible を落とすだけ ──
+   * ジオメトリの作り直しもアロケーションも発生しない。
+   */
+  setDensity(factor: number): void;
 }
 
 interface LayerConfig {
@@ -32,7 +44,15 @@ const STAR_COLOR = 0xcdd6ff;
 const SPARKLE_RATIO = 0.25;
 const SPARKLE_GAIN = 1.35;
 
-const NEBULA_RADIUS = 85;
+/**
+ * ネブラ球の半径。カメラ距離 20 以上で遠平面(engine の CAMERA_FAR)に切られて
+ * 多角形のシルエットが出ていたため、球を十分遠くへ逃がす(Phase 5 の指摘)。
+ * 遠平面 400 に対し、最遠カメラ(距離 40)からでも 190 で収まる。
+ */
+const NEBULA_RADIUS = 150;
+/** 分割数。全天を覆う球なので輪郭が折れない程度に細かくする(64×40 → 4992 三角形と軽い) */
+const NEBULA_SEGMENTS_W = 64;
+const NEBULA_SEGMENTS_H = 40;
 /**
  * ネブラの色付き成分の上限(シーン線形)。ACES + sRGB を通した後のピークが
  * rgb(6,17,29) 程度になる値で、#05060f のベースからごく僅かに立ち上がるだけ。
@@ -177,7 +197,7 @@ void main() {
 
 /**
  * 3 層の加算 Points 星背景 + fBm ネブラ背面球。
- * DPR は生成時の値を採用する(engine と同じく上限 2)。
+ * DPR の初期値は engine の起動時上限(2)に合わせ、以後は setPixelRatio() で追従する。
  */
 export function createStarfield(): Starfield {
   const group = new THREE.Group();
@@ -186,18 +206,31 @@ export function createStarfield(): Starfield {
   const pixelRatio = Math.min(typeof window === 'undefined' ? 1 : window.devicePixelRatio || 1, 2);
   const starColor = new THREE.Color(STAR_COLOR);
 
-  // update() 内でアロケーションしないよう uTime uniform の参照を事前収集する
+  // update() 内でアロケーションしないよう uniform の参照を事前収集する
   const timeUniforms: THREE.IUniform<number>[] = [];
+  const ratioUniforms: THREE.IUniform<number>[] = [];
+  const layerPoints: THREE.Points[] = [];
 
   for (const layer of LAYERS) {
-    const { points, timeUniform } = createStarLayer(layer, starColor, pixelRatio);
+    const { points, timeUniform, ratioUniform } = createStarLayer(layer, starColor, pixelRatio);
     group.add(points);
+    layerPoints.push(points);
     timeUniforms.push(timeUniform);
+    ratioUniforms.push(ratioUniform);
   }
 
   const nebula = createNebula();
   group.add(nebula.mesh);
   timeUniforms.push(nebula.timeUniform);
+
+  // 密度判定用の累積本数(近い層から)。ネブラは背景色そのものなので常に残す
+  const totalStars = LAYERS.reduce((sum, layer) => sum + layer.count, 0);
+  const cumulative: number[] = [];
+  let running = 0;
+  for (const layer of LAYERS) {
+    running += layer.count;
+    cumulative.push(running);
+  }
 
   let elapsed = 0;
 
@@ -211,6 +244,20 @@ export function createStarfield(): Starfield {
         timeUniforms[i].value = elapsed;
       }
     },
+    setPixelRatio(ratio: number): void {
+      const value = ratio > 0 ? ratio : 1;
+      for (let i = 0; i < ratioUniforms.length; i++) {
+        ratioUniforms[i].value = value;
+      }
+    },
+    setDensity(factor: number): void {
+      // 累積本数が予算を超える層から先に落とす。手前の層(最も構図に効く)は必ず残す。
+      // LAYERS = [3000, 2000, 1000] なので factor=0.5 → 手前 3000 本ちょうどが残る
+      const budget = totalStars * factor;
+      for (let i = 0; i < layerPoints.length; i++) {
+        layerPoints[i].visible = i === 0 || cumulative[i] <= budget;
+      }
+    },
   };
 }
 
@@ -218,7 +265,11 @@ function createStarLayer(
   layer: LayerConfig,
   color: THREE.Color,
   pixelRatio: number,
-): { points: THREE.Points; timeUniform: THREE.IUniform<number> } {
+): {
+  points: THREE.Points;
+  timeUniform: THREE.IUniform<number>;
+  ratioUniform: THREE.IUniform<number>;
+} {
   const { count, radius } = layer;
 
   const positions = new Float32Array(count * 3);
@@ -252,6 +303,7 @@ function createStarLayer(
   geometry.setAttribute('aBright', new THREE.BufferAttribute(brights, 1));
 
   const timeUniform: THREE.IUniform<number> = { value: 0 };
+  const ratioUniform: THREE.IUniform<number> = { value: pixelRatio };
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -259,7 +311,7 @@ function createStarLayer(
       uColor: { value: color },
       uBrightness: { value: layer.brightness },
       uTwinkleSpeed: { value: layer.twinkleSpeed },
-      uPixelRatio: { value: pixelRatio },
+      uPixelRatio: ratioUniform,
       uAttenuation: { value: radius },
     },
     vertexShader: STAR_VERTEX_SHADER,
@@ -272,11 +324,11 @@ function createStarLayer(
   const points = new THREE.Points(geometry, material);
   points.name = `starfield.layer.${radius}`;
 
-  return { points, timeUniform };
+  return { points, timeUniform, ratioUniform };
 }
 
 function createNebula(): { mesh: THREE.Mesh; timeUniform: THREE.IUniform<number> } {
-  const geometry = new THREE.SphereGeometry(NEBULA_RADIUS, 48, 32);
+  const geometry = new THREE.SphereGeometry(NEBULA_RADIUS, NEBULA_SEGMENTS_W, NEBULA_SEGMENTS_H);
   const timeUniform: THREE.IUniform<number> = { value: 0 };
 
   const material = new THREE.ShaderMaterial({

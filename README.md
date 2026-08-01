@@ -13,17 +13,63 @@
 - **POLYTOPE EXPLORER** — n次元超立方体・単体・正軸体(n = 3…10)。回転平面と投影法を自由に操作
 - **PERSPECTIVE** — 選んだ次元の住人として別の次元を見る。断面・影・そして高次元からのX線俯瞰
 
+## 操作 / Controls
+
+| 操作 | 動作 |
+|---|---|
+| **スクロール** | 物語「次元の階段」。0D → 6D のモーフはスクロール位置に完全に追従する(巻き戻しも可) |
+| **CTA「ギャラリーを探索する」** | エピローグからギャラリーへ。スクロール位置は保存され、いつでも戻れる |
+| **上部タブ** | 4展示の切り替え(HOPF / CLIFFORD / POLYTOPE / PERSPECTIVE) |
+| **ドラッグ・ホイール** | ギャラリー中のカメラ操作(回転・ズーム) |
+| **右パネル** | 展示ごとのパラメータ。モバイルでは下からのボトムシート |
+| **「解説」** | その展示の科学解説ドロワー |
+| **トップナビ 物語 / ギャラリー** | モードの往復。`Esc` でもギャラリーを抜けられる |
+| **右下「◈ AUTO」** | 描画品質セレクタ。AUTO・ULTRA・HIGH・BALANCED(下記) |
+
+### 描画品質
+
+**HIGH(DPR 2 / MSAA 4x)で起動**し、最初の60フレームの平均フレーム時間が10msを切っていれば
+**ULTRA(フルDPR上限3 / MSAA 8x / フル解像度ブルーム)へ昇格**する。以後は60フレーム窓の平均を
+見張り、18ms超が2窓続いたら1段だけ降格する(降格後の自動昇格はしない)。
+セレクタでティアを選ぶと固定され、自動制御は止まる。チップにホバー(または展開)すると
+実効解像度とMSAAサンプル数が出る。`prefers-reduced-motion` ではグレインが静止する。
+
 ## 技術 / Tech
 
 - Vite + TypeScript + Three.js(完全静的サイト)
 - 数学コアは純TypeScript(vitestによる数値検証付き)
-- ファットライン + Unreal Bloom + フィルムグレイン、ULTRA品質の自動エスカレーション
+- ファットライン + Unreal Bloom + グレード段(ビネット / フィルムグレイン / 色収差 / ディザ)
+- ULTRA品質のエスカレーション起動 + フレーム時間ベースのAUTO降格
 
 ## 開発 / Development
 
 ```bash
 npm install
 npm run dev      # 開発サーバー
-npx vitest run   # 数学コアのテスト
+npx vitest run   # 数学コアのテスト(35件)
 npm run build    # 静的ビルド → dist/
+npm run preview  # 本番ビルドの確認(:4173)
 ```
+
+## 公開 / Deploy
+
+`dist/` は**完全な静的サイト**(サーバー処理・環境変数・API依存なし)。
+`base: './'` で出力しているため、ドメイン直下でもサブパス配信でもそのまま動く。
+
+```bash
+npm run build
+
+# Netlify — 公開ディレクトリを dist に
+npx netlify deploy --prod --dir=dist
+
+# Vercel — 静的成果物をそのまま
+npx vercel deploy --prebuilt dist
+
+# GitHub Pages — dist を gh-pages ブランチへ
+npx gh-pages -d dist
+```
+
+CI で組む場合のビルドコマンドは `npm ci && npm run build`、公開ディレクトリは `dist`。
+OGP画像は `public/og.jpg` を同梱している。独自ドメインで運用する場合は
+`index.html` の `og:image` を絶対URL(`https://<host>/og.jpg`)にすると、
+相対URLを解決しないクローラにも確実に届く。

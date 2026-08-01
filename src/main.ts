@@ -16,6 +16,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Engine } from './core/engine';
 import { ScrollDirector } from './core/scrollDirector';
 import { Gallery, EXHIBIT_REGISTRY, type ExhibitId } from './core/gallery';
+import { QualityController } from './core/quality';
 import { createStarfield } from './render/starfield';
 import { NarrativeScene } from './scenes/narrative';
 import { PerspectiveExhibit, type CameraHint } from './scenes/perspectiveExhibit';
@@ -31,6 +32,16 @@ const canvas: HTMLCanvasElement = canvasEl;
 
 const engine = new Engine(canvas);
 const starfield = createStarfield();
+
+// 星の見かけ大きさは描画バッファ倍率に依存する。resize でも品質ティア適用でも
+// engine が同じ経路で配るので、購読はここ 1 箇所でよい(品質より先に登録する)
+engine.onResize((_width, _height, pixelRatio) => starfield.setPixelRatio(pixelRatio));
+
+/**
+ * 品質制御。HIGH で起動し、最初の 60 フレームの実測で ULTRA へ昇格する
+ * (エスカレーション起動 / 既知の罠 #12)。以後は 60 フレーム窓のガバナが見張る。
+ */
+const quality = new QualityController({ engine, starfield });
 
 /**
  * 単独展示のブートパス(開発・回帰検証用)。?exhibit=hopf | clifford | polytope |
@@ -143,6 +154,9 @@ function bootStandaloneExhibit(kind: ExhibitId): void {
     (window as unknown as Record<string, unknown>).__DIMENSION__ = {
       engine,
       exhibit,
+      quality,
+      /** GradePass の on/off(グレイン・ビネット・ディザの before/after 比較用) */
+      grade: (on: boolean): void => engine.postfx.setGradeEnabled(on),
       renderOnce,
     };
   }
@@ -244,6 +258,9 @@ function bootNarrative(): void {
       narrative,
       scrollDirector,
       overlays,
+      quality,
+      /** GradePass の on/off(グレイン・ビネット・ディザの before/after 比較用) */
+      grade: (on: boolean): void => engine.postfx.setGradeEnabled(on),
       /** 初回入場までは null(遅延生成) */
       get gallery(): Gallery | null {
         return gallery;

@@ -7,9 +7,29 @@
     <meta name="theme-color" content="#05060f" />
     <meta
       name="description"
-      content="人間が直接見ることのできない高次元の構造を、スクロールする物語と対話型ギャラリーで体験する可視化作品。"
+      content="見えないまま、正確に ── 0次元の点から6次元超立方体までを連続的に押し出す物語と、ホップ・ファイブレーションをはじめとする4展示で、人間の目が受けとれない高次元の構造を体験する可視化作品。"
     />
     <title>DIMENSION｜高次元を見る</title>
+
+    <!-- OGP / Twitter Card。og:image は相対パス(vite の base: './' と揃える) -->
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="DIMENSION" />
+    <meta property="og:locale" content="ja_JP" />
+    <meta property="og:title" content="DIMENSION｜高次元を見る" />
+    <meta
+      property="og:description"
+      content="0次元の点から6次元超立方体へ。スクロールする物語と4つの展示で、見えない次元の構造を見る。"
+    />
+    <meta property="og:image" content="./og.jpg" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="ステレオ投影されたホップ・ファイブレーションの光の輪" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="DIMENSION｜高次元を見る" />
+    <meta
+      name="twitter:description"
+      content="0次元の点から6次元超立方体へ。スクロールする物語と4つの展示で、見えない次元の構造を見る。"
+    />
     <!-- JS 無効時でも本文が読めるようにする(通常は fonts.ready が .fonts-ready を付ける) -->
     <noscript>
       <style>
@@ -101,6 +121,12 @@
         <div class="dw-body" id="drawer-body"></div>
       </aside>
     </div>
+
+    <!--
+      描画品質セレクタ(AUTO・ULTRA・HIGH・BALANCED)。中身は src/core/quality.ts が
+      構築する ── ここに置くのは器と、style.css が参照する id だけ。
+    -->
+    <div id="quality"></div>
 
     <!-- モード遷移の暗転(250ms)。reduced-motion では transition を無効化する -->
     <div id="mode-fade" aria-hidden="true"></div>

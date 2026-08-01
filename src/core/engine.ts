@@ -19,8 +19,13 @@ export interface ResolutionTrackingMaterial {
   resolution: THREE.Vector2;
 }
 
-/** Phase 8 のエスカレーション制御が入るまでの暫定 DPR 上限 */
-const MAX_PIXEL_RATIO = 2;
+/**
+ * 起動時の DPR 上限。**HIGH ティア相当**で立ち上げ、実測フレーム時間が足りていれば
+ * quality.ts が setQuality() で 3 まで引き上げる(エスカレーション起動 / 既知の罠 #12)。
+ */
+const BOOT_DPR_CAP = 2;
+/** 起動時の MSAA サンプル数(HIGH ティア相当) */
+const BOOT_SAMPLES = 4;
 /** モバイル Safari のアドレスバー伸縮によるリサイズストーム対策(既知の罠 #5) */
 const RESIZE_DEBOUNCE_MS = 150;
 /** タブ非表示から復帰したときの dt スパイク対策(既知の罠 #7) */
@@ -28,7 +33,13 @@ const MAX_DELTA = 1 / 20;
 
 const CAMERA_FOV = 50;
 const CAMERA_NEAR = 0.05;
-const CAMERA_FAR = 100;
+/**
+ * 遠平面。ネブラ球(半径 150)の**裏側**まで含めて切らない距離であること。
+ * カメラの最大距離は展示レジストリの maxDistance = 40 なので、必要なのは
+ * 150 + 40 = 190 以上 ── 余裕を見て 400 とする。ここが足りないと遠景球が
+ * 遠平面で切られ、切り口が多角形のシルエットとして見える(Phase 5 の指摘)。
+ */
+const CAMERA_FAR = 400;
 const CAMERA_Z = 6;
 
 /**
@@ -71,6 +82,8 @@ export class Engine {
   private elapsed = 0;
   private running = false;
   private contextLost = false;
+  /** devicePixelRatio の上限。品質ティア(quality.ts)が唯一の書き手 */
+  private dprCap = BOOT_DPR_CAP;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -87,7 +100,7 @@ export class Engine {
 
     const width = Engine.viewportWidth();
     const height = Engine.viewportHeight();
-    const pixelRatio = Engine.pixelRatio();
+    const pixelRatio = this.pixelRatio();
 
     this.renderer.setPixelRatio(pixelRatio);
     // updateStyle = false: レイアウトサイズは CSS(#gl の inset:0)に委ねる
@@ -100,7 +113,7 @@ export class Engine {
     this.scene = new THREE.Scene();
 
     this.postfx = buildPostFX(this.renderer, this.scene, this.camera, {
-      samples: Math.min(4, this.renderer.capabilities.maxSamples),
+      samples: Math.min(BOOT_SAMPLES, this.renderer.capabilities.maxSamples),
     });
 
     canvas.addEventListener('webglcontextlost', this.handleContextLost, false);
@@ -123,6 +136,25 @@ export class Engine {
   setScene(scene: THREE.Scene): void {
     this.scene = scene;
     this.postfx.renderPass.scene = scene;
+  }
+
+  /**
+   * 品質ティアの適用(quality.ts からのみ呼ぶ)。
+   *
+   * DPR 上限と MSAA サンプル数を差し替え、リサイズ経路をそのまま通す ──
+   * composer のターゲット・ブルーム解像度・LineMaterial.resolution・
+   * onResize 購読者(starfield の uPixelRatio など)が一度に整合する。
+   * samples は GPU の上限で必ずクランプする(ULTRA の 8x が通らない環境がある)。
+   */
+  setQuality(quality: { samples: number; dpr: number }): void {
+    this.dprCap = Math.max(1, quality.dpr);
+    this.postfx.setSamples(Math.min(quality.samples, this.renderer.capabilities.maxSamples));
+    this.applyResize();
+  }
+
+  /** 実効の描画バッファサイズを out へ書き込む(品質セレクタの表示用) */
+  getDrawingBufferSize(out: THREE.Vector2): THREE.Vector2 {
+    return this.renderer.getDrawingBufferSize(out);
   }
 
   onFrame(cb: FrameCallback): void {
@@ -178,6 +210,8 @@ export class Engine {
       callbacks[i](dt, this.elapsed);
     }
 
+    // GradePass のグレインを流す(reduced-motion では postfx 側が無視する)
+    this.postfx.setTime(this.elapsed);
     this.postfx.composer.render();
 
     const afterRender = this.afterRenderCallbacks;
@@ -197,7 +231,7 @@ export class Engine {
 
     const width = Engine.viewportWidth();
     const height = Engine.viewportHeight();
-    const pixelRatio = Engine.pixelRatio();
+    const pixelRatio = this.pixelRatio();
 
     this.renderer.setPixelRatio(pixelRatio);
     this.renderer.setSize(width, height, false);
@@ -280,7 +314,8 @@ export class Engine {
     return Math.max(1, Math.floor(window.visualViewport?.height ?? window.innerHeight));
   }
 
-  private static pixelRatio(): number {
-    return Math.min(window.devicePixelRatio || 1, MAX_PIXEL_RATIO);
+  /** 実効 DPR。上限は品質ティアが決める(ULTRA なら 3 まで解放) */
+  private pixelRatio(): number {
+    return Math.min(window.devicePixelRatio || 1, this.dprCap);
   }
 }
