@@ -17,6 +17,7 @@ import { ScrollDirector } from './core/scrollDirector';
 import { createStarfield } from './render/starfield';
 import { NarrativeScene } from './scenes/narrative';
 import { HopfExhibit } from './scenes/hopfExhibit';
+import { CliffordExhibit } from './scenes/cliffordExhibit';
 import { PolytopeExhibit } from './scenes/polytopeExhibit';
 import type { Exhibit } from './scenes/exhibit';
 import { CHAPTERS, CHAPTER_DIMS } from './ui/content';
@@ -31,19 +32,21 @@ const engine = new Engine(canvas);
 const starfield = createStarfield();
 
 /**
- * 単独展示のブートパス(検証用)。?exhibit=hopf | polytope で物語を迂回して
- * 展示単体 + OrbitControls を起動する。Phase 7 の gallery が正式な導線に
+ * 単独展示のブートパス(検証用)。?exhibit=hopf | clifford | polytope で物語を
+ * 迂回して展示単体 + OrbitControls を起動する。Phase 7 の gallery が正式な導線に
  * なるまでの開発・レビュー用経路。
  */
+type StandaloneExhibit = 'hopf' | 'clifford' | 'polytope';
+
 const exhibitParam = new URLSearchParams(window.location.search).get('exhibit');
 
-if (exhibitParam === 'hopf' || exhibitParam === 'polytope') {
+if (exhibitParam === 'hopf' || exhibitParam === 'clifford' || exhibitParam === 'polytope') {
   bootStandaloneExhibit(exhibitParam);
 } else {
   bootNarrative();
 }
 
-function bootStandaloneExhibit(kind: 'hopf' | 'polytope'): void {
+function bootStandaloneExhibit(kind: StandaloneExhibit): void {
   document.body.classList.add('mode-gallery');
   // 物語 DOM は不要なので隠す(スクロールも殺す)
   const narrativeRoot = document.getElementById('narrative');
@@ -52,14 +55,23 @@ function bootStandaloneExhibit(kind: 'hopf' | 'polytope'): void {
   document.getElementById('progress')?.remove();
   document.body.style.overflow = 'hidden';
 
-  const exhibit: Exhibit = kind === 'hopf' ? new HopfExhibit() : new PolytopeExhibit();
+  const exhibit: Exhibit =
+    kind === 'hopf'
+      ? new HopfExhibit()
+      : kind === 'clifford'
+        ? new CliffordExhibit()
+        : new PolytopeExhibit();
   exhibit.init({ engine });
   exhibit.scene.add(starfield.group);
   engine.setScene(exhibit.scene);
 
-  // Hopf の既定分布は半径 ~4 の入れ子トーラス束。斜め上から構造が読める位置に置く
+  // Hopf の既定分布は半径 ~4 の入れ子トーラス束。斜め上から構造が読める位置に置く。
+  // Clifford の静止像は半径 ~2.4 に収まるが、歳差が極へ寄ると大きく膨らむので
+  // 少し引いた位置から(膨張は maxDistance まで引いて追える)
   if (kind === 'hopf') {
     engine.camera.position.set(3.4, 3.0, 7.6);
+  } else if (kind === 'clifford') {
+    engine.camera.position.set(3.0, 2.2, 6.5);
   } else {
     engine.camera.position.set(2.7, 1.9, 5.0);
   }
@@ -69,7 +81,7 @@ function bootStandaloneExhibit(kind: 'hopf' | 'polytope'): void {
   controls.enableDamping = true;
   controls.dampingFactor = 0.08;
   controls.minDistance = 2.5;
-  controls.maxDistance = kind === 'hopf' ? 40 : 20;
+  controls.maxDistance = kind === 'hopf' ? 40 : kind === 'clifford' ? 30 : 20;
   controls.enablePan = false;
 
   engine.onFrame((dt, t) => {
