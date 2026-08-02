@@ -60,6 +60,30 @@
   --gal-panel-w: min(21rem, 30vw);
   /* タブ帯の高さ + 余白。ヘッダとパネルの上端を揃える基準 */
   --gal-shelf: 4.9rem;
+
+  /* セーフエリア(Phase 14a)。
+     index.html は viewport-fit=cover を宣言しているのに env() を 1 度も
+     読んでいなかった ── モバイルの --hud-inset は 16px で、iOS のホーム
+     インジケータ帯 34px の**内側**にチップが座っていた。
+
+     辺ごとに 4 本持つのが要点。--hud-inset は left/right/bottom すべてに
+     使われ、さらに .s-hint の幅の式にも入っているので、**トークン自身に
+     env() を混ぜてはならない**(横方向の余白へ下辺のインセットが漏れる)。
+
+     そして派生変数は積み上げの **底** にだけ使う ──
+     calc(var(--hud-inset-b) + var(--hud-stack) * 2) のように書く。
+     段の側へ足すと段数ぶん二重に数える。 */
+  --sa-t: env(safe-area-inset-top, 0px);
+  --sa-r: env(safe-area-inset-right, 0px);
+  --sa-b: env(safe-area-inset-bottom, 0px);
+  --sa-l: env(safe-area-inset-left, 0px);
+
+  --hud-inset-r: calc(var(--hud-inset) + var(--sa-r));
+  --hud-inset-b: calc(var(--hud-inset) + var(--sa-b));
+  --hud-inset-l: calc(var(--hud-inset) + var(--sa-l));
+  --gal-top-safe: calc(var(--gal-top) + var(--sa-t));
+  --gal-gutter-l: calc(var(--gal-gutter) + var(--sa-l));
+  --gal-gutter-r: calc(var(--gal-gutter) + var(--sa-r));
 }
 
 *,
@@ -461,8 +485,8 @@ body.fonts-ready #narrative {
 .hud-dim,
 .hud-ex {
   position: absolute;
-  left: var(--hud-inset);
-  bottom: var(--hud-inset);
+  left: var(--hud-inset-l);
+  bottom: var(--hud-inset-b);
   height: var(--pill-h);
   display: flex;
   align-items: center;
@@ -537,8 +561,8 @@ body.mode-gallery .hud-ex {
 
 #perspective-inset {
   position: fixed;
-  right: var(--pv-inset-margin, 16px);
-  bottom: var(--pv-inset-margin, 16px);
+  right: calc(var(--pv-inset-margin, 16px) + var(--sa-r));
+  bottom: calc(var(--pv-inset-margin, 16px) + var(--sa-b));
   z-index: 2;
   width: var(--pv-inset-w, 280px);
   height: var(--pv-inset-h, 205px);
@@ -584,7 +608,7 @@ body.mode-gallery .hud-ex {
 #perspective-caption {
   position: fixed;
   left: 50%;
-  bottom: clamp(1rem, 3vw, 2.4rem);
+  bottom: calc(clamp(1rem, 3vw, 2.4rem) + var(--sa-b));
   z-index: 2;
   margin: 0;
   transform: translateX(-50%);
@@ -621,7 +645,7 @@ body.mode-gallery .hud-ex {
 /* 幅が足りない画面ではキャプションをインセットの上へ逃がす(重なり回避) */
 @media (max-width: 1080px) {
   #perspective-caption {
-    bottom: calc(var(--pv-inset-h, 205px) + var(--pv-inset-margin, 16px) * 2);
+    bottom: calc(var(--pv-inset-h, 205px) + var(--pv-inset-margin, 16px) * 2 + var(--sa-b));
   }
 }
 
@@ -683,12 +707,12 @@ body.mode-gallery #perspective-caption {
 
 #gallery-tabs {
   position: absolute;
-  top: var(--gal-top);
+  top: var(--gal-top-safe);
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   gap: 0;
-  max-width: calc(100vw - 2rem);
+  max-width: calc(100vw - var(--sa-l) - var(--sa-r) - 2rem);
   padding: var(--s2) var(--s2) 10px;
   border: 1px solid var(--hairline);
   border-radius: 14px;
@@ -801,8 +825,8 @@ body.mode-gallery #perspective-caption {
 
 #gallery-head {
   position: absolute;
-  left: var(--gal-gutter);
-  top: calc(var(--gal-top) + var(--gal-shelf));
+  left: var(--gal-gutter-l);
+  top: calc(var(--gal-top-safe) + var(--gal-shelf));
   width: min(24rem, 34vw);
   /* 文字の外側はキャンバスへ抜く(構図をドラッグで回せる) */
   pointer-events: none;
@@ -917,9 +941,9 @@ body.mode-gallery #perspective-caption {
 
 #gallery-panel {
   position: absolute;
-  right: var(--gal-gutter);
-  top: calc(var(--gal-top) + var(--gal-shelf));
-  bottom: clamp(1rem, 4vh, 2.4rem);
+  right: var(--gal-gutter-r);
+  top: calc(var(--gal-top-safe) + var(--gal-shelf));
+  bottom: calc(clamp(1rem, 4vh, 2.4rem) + var(--sa-b));
   width: var(--gal-panel-w);
   display: flex;
   flex-direction: column;
@@ -933,7 +957,7 @@ body.mode-gallery #perspective-caption {
 
 /* perspective の神視点インセット(右下)とパネルを縦に住み分けさせる */
 #gallery[data-exhibit='perspective'] #gallery-panel {
-  bottom: calc(var(--pv-inset-h, 205px) + var(--pv-inset-margin, 16px) * 2);
+  bottom: calc(var(--pv-inset-h, 205px) + var(--pv-inset-margin, 16px) * 2 + var(--sa-b));
 }
 
 .panel {
@@ -1439,7 +1463,10 @@ body.mode-gallery #perspective-caption {
   width: min(30rem, 46vw);
   display: flex;
   flex-direction: column;
-  padding: clamp(1.4rem, 4vh, 2.6rem) clamp(1.2rem, 3vw, 2.2rem);
+  --dw-pad-block: clamp(1.4rem, 4vh, 2.6rem);
+  --dw-pad-inline: clamp(1.2rem, 3vw, 2.2rem);
+  padding: calc(var(--dw-pad-block) + var(--sa-t)) calc(var(--dw-pad-inline) + var(--sa-r))
+    calc(var(--dw-pad-block) + var(--sa-b)) calc(var(--dw-pad-inline) + var(--sa-l));
   border-right: 1px solid rgba(255, 255, 255, 0.08);
   background: rgba(6, 8, 18, 0.84);
   -webkit-backdrop-filter: blur(22px) saturate(140%);
@@ -1565,8 +1592,8 @@ body.mode-gallery #perspective-caption {
 
 #mode-nav {
   position: fixed;
-  top: clamp(1rem, 2.6vh, 1.8rem);
-  right: clamp(1.1rem, 3.4vw, 3rem);
+  top: calc(clamp(1rem, 2.6vh, 1.8rem) + var(--sa-t));
+  right: calc(clamp(1.1rem, 3.4vw, 3rem) + var(--sa-r));
   z-index: 5;
   display: none;
   gap: 0.25rem;
@@ -1641,8 +1668,8 @@ body.has-gallery #mode-nav {
 
 #quality {
   position: fixed;
-  right: var(--hud-inset);
-  bottom: var(--hud-inset);
+  right: var(--hud-inset-r);
+  bottom: var(--hud-inset-b);
   z-index: 5;
   display: flex;
   flex-direction: column;
@@ -1661,8 +1688,8 @@ body.has-gallery #mode-nav {
 */
 body.mode-gallery #quality {
   right: auto;
-  left: var(--hud-inset);
-  bottom: calc(var(--hud-inset) + var(--pill-h) + var(--s2));
+  left: var(--hud-inset-l);
+  bottom: calc(var(--hud-inset-b) + var(--pill-h) + var(--s2));
   align-items: flex-start;
 }
 
@@ -1803,8 +1830,8 @@ body.drawer-open #quality {
 
 #sound {
   position: fixed;
-  right: var(--hud-inset);
-  bottom: var(--hud-inset);
+  right: var(--hud-inset-r);
+  bottom: var(--hud-inset-b);
   z-index: 5;
   font-family: var(--font-mono);
   transition:
@@ -1814,17 +1841,17 @@ body.drawer-open #quality {
 
 /* 音チップが在るときだけ品質チップが 1 段上がる(単独展示ブートでは動かない) */
 body.has-sound #quality {
-  bottom: calc(var(--hud-inset) + var(--hud-stack));
+  bottom: calc(var(--hud-inset-b) + var(--hud-stack));
 }
 
 body.mode-gallery #sound {
   right: auto;
-  left: var(--hud-inset);
-  bottom: calc(var(--hud-inset) + var(--hud-stack));
+  left: var(--hud-inset-l);
+  bottom: calc(var(--hud-inset-b) + var(--hud-stack));
 }
 
 body.mode-gallery.has-sound #quality {
-  bottom: calc(var(--hud-inset) + var(--hud-stack) * 2);
+  bottom: calc(var(--hud-inset-b) + var(--hud-stack) * 2);
 }
 
 /* 解説を開いているあいだは引っ込む(品質チップと同じ判断) */
@@ -1955,7 +1982,7 @@ body.drawer-open #sound {
   top: 50%;
   translate: 0 -50%;
   width: max-content;
-  max-width: min(23rem, calc(100vw - var(--hud-inset) * 2 - 9rem));
+  max-width: min(23rem, calc(100vw - var(--hud-inset-l) - var(--hud-inset-r) - 9rem));
   margin: 0;
   font-family: var(--font-body);
   font-size: 11px;
@@ -1984,7 +2011,7 @@ body.mode-gallery .s-hint {
     top: auto;
     bottom: calc(100% + var(--hud-stack) + var(--s2));
     translate: none;
-    max-width: calc(100vw - var(--hud-inset) * 2);
+    max-width: calc(100vw - var(--hud-inset-l) - var(--hud-inset-r));
   }
 
   .s-hint {
@@ -2013,8 +2040,8 @@ body.mode-gallery .s-hint {
 
 #immersive {
   position: fixed;
-  right: var(--hud-inset);
-  bottom: var(--hud-inset);
+  right: var(--hud-inset-r);
+  bottom: var(--hud-inset-b);
   z-index: 5;
   display: none;
   font-family: var(--font-mono);
@@ -2027,13 +2054,13 @@ body.mode-gallery .s-hint {
 body.mode-gallery #immersive {
   display: block;
   /* デスクトップの右下は操作卓のドックが占めている ── その左隣に座る */
-  right: calc(var(--gal-gutter) + var(--gal-panel-w) + var(--s3));
+  right: calc(var(--gal-gutter-r) + var(--gal-panel-w) + var(--s3));
 }
 
 /* 退いたあと、チップだけは残って画面の隅で待つ。右下へ戻って絵を明け渡す */
 body.mode-gallery.ui-hidden #immersive {
-  right: var(--hud-inset);
-  bottom: var(--hud-inset);
+  right: var(--hud-inset-r);
+  bottom: var(--hud-inset-b);
 }
 
 body.drawer-open #immersive {
@@ -2337,8 +2364,8 @@ body.ui-hidden #perspective-inset {
 
 .pl-percent {
   position: absolute;
-  right: clamp(1rem, 3vw, 2.4rem);
-  bottom: clamp(1rem, 3vw, 2.4rem);
+  right: calc(clamp(1rem, 3vw, 2.4rem) + var(--sa-r));
+  bottom: calc(clamp(1rem, 3vw, 2.4rem) + var(--sa-b));
   margin: 0;
   font-family: var(--font-mono);
   font-size: 0.72rem;
@@ -2575,9 +2602,9 @@ html {
 
   /* 上から ナビ → タブ帯 → ヘッダ の順に積む(横に並べる幅がない) */
   #gallery-tabs {
-    top: calc(var(--gal-top) + 2.9rem);
-    left: 0.6rem;
-    right: 0.6rem;
+    top: calc(var(--gal-top-safe) + 2.9rem);
+    left: calc(0.6rem + var(--sa-l));
+    right: calc(0.6rem + var(--sa-r));
     transform: none;
     max-width: none;
     border-radius: 12px;
@@ -2586,7 +2613,7 @@ html {
 
   #gallery-head {
     width: auto;
-    right: var(--gal-gutter);
+    right: var(--gal-gutter-r);
   }
 
   .gh-tagline {
@@ -2614,8 +2641,26 @@ html {
     max-height: 46svh;
   }
 
+  /*
+    ホームインジケータぶんの内側余白(Phase 14a)。
+
+    **セーフエリアの下辺に触るのは、この 1 ルールだけ。**
+    シートは bottom:0 に貼りついていて、その上に立つチップの柱は
+    calc(var(--sheet-h) + ...) で組まれている。--sheet-h は Panel.ts が
+    getBoundingClientRect().height を**実測**して書き戻す値なので、
+    ここに padding を足せば柱は自動で持ち上がる。
+
+    柱の式(下の 6 か所)にも --sa-b を足すと、実測値に既に含まれている
+    ぶんと合わせて **34px の二重計上**になる。逆に bottom: env(...) にすると
+    シートの高さが変わらないぶん --sa-b だけ過小報告し、チップがシートに重なる。
+
+    box-sizing:border-box なので padding は max-height:46svh の内側に入る ──
+    シートの占有高は変わらず、ガラスは物理的な下端まで届いたまま、
+    操作子だけがインジケータ帯の上で止まる。
+  */
   #gallery-panel > .panel {
     max-height: 46svh;
+    padding-bottom: var(--sa-b);
     border-radius: 16px 16px 0 0;
     border-bottom: 0;
   }
@@ -2649,7 +2694,7 @@ html {
   }
 
   .panel-body {
-    max-height: calc(46svh - 3.6rem);
+    max-height: calc(46svh - 3.6rem - var(--sa-b));
   }
 
   #gallery-panel.is-collapsed .panel-body {
@@ -2687,8 +2732,8 @@ html {
   }
 
   #mode-nav {
-    top: clamp(0.8rem, 2vh, 1.4rem);
-    right: 0.85rem;
+    top: calc(clamp(0.8rem, 2vh, 1.4rem) + var(--sa-t));
+    right: calc(0.85rem + var(--sa-r));
   }
 
   .nav-pill {
@@ -2726,13 +2771,13 @@ html {
   }
 
   body.mode-gallery #quality {
-    left: var(--hud-inset);
+    left: var(--hud-inset-l);
     bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack));
   }
 
   /* 音チップも同じ柱に積む。下から [ボトムシート][展示カウンタ][音][品質] */
   body.mode-gallery #sound {
-    left: var(--hud-inset);
+    left: var(--hud-inset-l);
     bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack));
   }
 
@@ -2742,7 +2787,7 @@ html {
 
   /* 没入チップは右側の柱に単独で立つ(左は計器の柱) */
   body.mode-gallery #immersive {
-    right: var(--hud-inset);
+    right: var(--hud-inset-r);
     bottom: calc(var(--sheet-h, 3.5rem) + var(--s2));
   }
 
@@ -2760,8 +2805,8 @@ html {
      位置を決めているのはこの 3 行だけ ── 数式の二重実装は無い。
   */
   #perspective-inset {
-    top: calc(var(--gal-top) + var(--gal-shelf) + var(--s2));
-    right: 12px;
+    top: calc(var(--gal-top-safe) + var(--gal-shelf) + var(--s2));
+    right: calc(12px + var(--sa-r));
     bottom: auto;
   }
 
@@ -2783,8 +2828,8 @@ html {
   body.mode-gallery #perspective-caption {
     /* left:50% + translateX の縮小幅は「left から右端まで」で頭打ちになる
        (絶対配置の shrink-to-fit 規則)。モバイルでは両端で留めて幅を使い切る */
-    left: 12px;
-    right: 12px;
+    left: calc(12px + var(--sa-l));
+    right: calc(12px + var(--sa-r));
     transform: none;
     max-width: none;
     bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack) * 3 + 12px);
@@ -2813,8 +2858,8 @@ html {
 
   /* タブ帯はトップナビのぶんだけ右を空けて左寄せにする(足りなければ横スクロール) */
   #gallery-tabs {
-    left: var(--gal-gutter);
-    right: calc(var(--gal-gutter) + 11rem);
+    left: var(--gal-gutter-l);
+    right: calc(var(--gal-gutter-r) + 11rem);
     transform: none;
     max-width: none;
     justify-content: flex-start;

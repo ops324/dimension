@@ -278,8 +278,22 @@ class Panel implements PanelBuilder, Component {
     const collapsed = this.root.classList.contains('is-collapsed');
     let height: number;
     if (collapsed) {
-      // 畳んだシートの高さ = ヘッダ(つまみ)だけ。本体の遷移とは無関係に確定する
-      height = this.head.getBoundingClientRect().height;
+      /*
+        畳んだシートの高さ = ヘッダ(つまみ)+ シート下端の余白。
+
+        ヘッダだけを測るのは、本体の遷移(max-height → 0)の**途中の高さ**を
+        拾わないため ── 畳むボタンを押した直後にここが呼ばれる。
+
+        ただし Phase 14a で `.panel`(= this.element。this.root は外側の器)は
+        `padding-bottom: var(--sa-b)` を持った(ホームインジケータ帯のぶん)。
+        この余白はヘッダの矩形の**外**にあるので、足さないと --sheet-h が
+        --sa-b ぶん過小報告し、上に積むチップがシートへ食い込む
+        (実測で 34px 重なった)。padding は静的な値なので、
+        本体の遷移とは無関係という性質は保たれる。
+      */
+      height =
+        this.head.getBoundingClientRect().height +
+        parseFloat(getComputedStyle(this.element).paddingBottom || '0');
     } else if (settled || this.lastExpanded === 0) {
       height = this.root.getBoundingClientRect().height;
       if (settled) this.lastExpanded = height;
