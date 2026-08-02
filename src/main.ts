@@ -16,6 +16,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { Engine } from './core/engine';
 import { ScrollDirector } from './core/scrollDirector';
 import { Gallery, EXHIBIT_REGISTRY, type ExhibitId } from './core/gallery';
+import { Router, parseRoute } from './core/route';
 import { QualityController } from './core/quality';
 import { createStarfield } from './render/starfield';
 import { NarrativeScene } from './scenes/narrative';
@@ -261,10 +262,6 @@ function bootNarrative(): void {
   // 4) テキストオーバーレイ(振り付け・HUD・進捗バー・CTA)
   const overlays = new Overlays({ director: scrollDirector, chapters: CHAPTERS, dom, announcer });
 
-  // プリローダが上下パネルを割りはじめた瞬間にテキストの振り付けを始める ──
-  // 開いていく隙間の向こうで、序章がちょうど立ち上がる
-  onCurtainRise = overlays.start;
-
   /**
    * 5) ギャラリーは**初回入場時に初めて構築する**。
    * 4 展示ぶんのバッファ(Hopf 1200×192 線分ほか)を起動時に確保しないことで、
@@ -273,13 +270,40 @@ function bootNarrative(): void {
   let gallery: Gallery | null = null;
   const ensureGallery = (): Gallery => {
     if (gallery === null) {
-      gallery = new Gallery({ engine, canvas, starfield, narrative, scrollDirector, announcer });
+      gallery = new Gallery({
+        engine,
+        canvas,
+        starfield,
+        narrative,
+        scrollDirector,
+        router,
+        announcer,
+      });
     }
     return gallery;
   };
+
+  /**
+   * URL と履歴(Phase 13)。popstate も深リンクも **ensureGallery() を通る**ので、
+   * 遅延構築の保証は構造的に保たれる ── URL かユーザーが求めない限り誰も呼ばない。
+   */
+  const initialRoute = parseRoute(window.location.href, history.state);
+  const router = new Router((route) => ensureGallery().applyRoute(route));
+
   window.addEventListener('dimension:enter-gallery', () => {
-    ensureGallery().enterGallery();
+    ensureGallery().requestEnter();
   });
+
+  // プリローダが上下パネルを割りはじめた瞬間にテキストの振り付けを始める ──
+  // 開いていく隙間の向こうで、序章がちょうど立ち上がる。
+  // URL がギャラリーを名指していたときだけ、ここで 4 展示を建てる ──
+  // 物語だけの訪問者はこれまでどおり 1 バイトのバッファも確保しない。
+  // 幕は張らない(instant): .tx(z 80)はプリローダ(.pl = 90)の下なので、
+  // 被せても「止まったローダー」が 1.1 秒伸びるだけになる
+  onCurtainRise = (): void => {
+    overlays.start();
+    if (initialRoute.mode === 'gallery') ensureGallery().applyRoute(initialRoute, true);
+  };
 
   // resize は engine が debounce(150ms)して配る。セクション高は svh 基準なので
   // アドレスバーの伸縮では変わらないが、回転や幅変更では必ず測り直す(既知の罠 #5)。
@@ -355,9 +379,13 @@ function bootNarrative(): void {
       get gallery(): Gallery | null {
         return gallery;
       },
-      /** 検証から直接モードを叩くための口 */
-      enterGallery: (): void => ensureGallery().enterGallery(),
-      exitGallery: (): void => gallery?.exitGallery(),
+      router,
+      /**
+       * 検証から直接モードを叩くための口。**履歴経由**にしてあるので、
+       * ヘッドレス検証が本番と同じ経路(URL 更新・戻るの行き先)を通る
+       */
+      enterGallery: (): void => ensureGallery().requestEnter(),
+      exitGallery: (): void => router.leave(),
       /** 指定スクロール位置へ即座に飛ぶ(html { scroll-behavior: auto }) */
       setScroll: (y: number): void => window.scrollTo(0, y),
       /** 合成フレームを steps 回進めて 1 枚描画する。戻り値は到達した dimLevel */

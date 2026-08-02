@@ -258,6 +258,49 @@ dimLevel=0 で点、1で線、3.5で立方体がテッセラクトへ半分押�
 - `expSmooth`(rate 6)でフレームレート非依存の平滑化
 - 物語→ギャラリーはスクロールハイジャックせず、エピローグのCTAボタンで明示遷移(scrollY保存・復元)
 
+### 6.1 URL と履歴(`src/core/route.ts` — Phase 13)
+
+モードと表示中の展示は **`?gallery=<exhibitId>`** に載る(物語 = パラメータ無し)。
+これが無かった頃は「展示を人に送れない」だけでなく、**ギャラリー入場後の戻る /
+iOS の端スワイプでサイトごと離脱していた**。
+
+| 操作 | 履歴 |
+|---|---|
+| 物語 → ギャラリー | 物語エントリへ `replaceState({d:'narrative', y:scrollY})` してから `pushState({d:'gallery', exhibit, owned:true})` |
+| タブ切替 | `replaceState` — **4展示で履歴を汚さない**(戻るは常に「入る前」へ帰る) |
+| Esc / トップナビ「物語」 | `owned` なら `history.back()`、深リンクなら `replaceState` |
+| popstate | URL を再パースして `Gallery.applyRoute()` へ。**Esc と同じ 1 本の階段**を降りる |
+
+判断の根拠:
+
+- **ハッシュは不可** — `#gallery` も `ch-prologue`…`ch-epilogue` も実在の id。フラグメント
+  スクロールは**物語の状態そのものである scrollY** を壊し、ScrollDirector の毎フレーム読みと食い合う
+- **パスは不可** — GitHub Pages に SPA フォールバックが無い。`/gallery/hopf` はリロードで
+  404 になり、`/dimension/` のサブパスも落ちる
+- **`?exhibit=` と重ねない(必須)** — `?exhibit=` は同じ4つの id を取る単独ブートで、
+  `#narrative` / `#hud` / `#gallery` / `#mode-nav` を **DOM から削除する**。共有リンクが
+  そちらへ落ちたら受け取った人はクローム無しの開発ハーネスに閉じ込められる。
+  `main.ts` は `?exhibit=` を**先に**判定し、そのとき Router は構築しない
+- URL は必ず `new URL(window.location.href)` から組む — サブパス配信・カスタムドメイン・
+  他のクエリ・ハッシュが、この層が何も知らないまま保たれる
+- **`owned` は履歴エントリ自身に焼く**。進む/戻るでエントリと一緒に旅するので往復しても
+  判定がずれず、リロードも越える。深リンク(エントリ0)では `back()` を**呼ばない** ──
+  呼べばサイトを離れる、まさに直そうとしているバグそのものになる
+- **没入モードとドロワーは履歴に入れない** — `setUiHidden` はキャンバスの素のタップから
+  到達するので、作品を見回すだけで履歴が溜まる
+- **遷移中の popstate は 1 つだけ預かる**(`pendingRoute`)。`enterGallery`/`exitGallery` は
+  `busy` で早期 return し void を返すので、popstate 側は却下を検知できない。`busy` は幕の
+  40+480+40 = **560ms** 続き、iOS の端スワイプ連打はこれより速い。落とすと**履歴インデックスが
+  恒久的にずれる**。10連打の実測で最終 URL と描画モードが一致することを確認済み
+- **深リンク入場は幕を張らない** — `.tx` は z-index 80、`.pl` は 90 なので、幕はプリローダの
+  **下**で動く。被せても 1.1 秒ぶん「止まったローダー」が伸びるだけになる
+- **`history.scrollRestoration` は `'auto'` のまま**。`ScrollDirector` の初フレーム処理
+  (リロード復帰時の 0 からの助走を防ぐ)がブラウザの自動復元の上に建っている。
+  実測: ギャラリーでリロード → 戻る、でブラウザは 2080 を復元したが、フェード
+  コールバック内(約250ms後)の `scrollTo(0, 6800)` が勝った。**競合しない**
+- 物語エントリに焼く `y` は `savedScrollY` が救えない唯一の場合のため ── ギャラリーに
+  居る状態でリロードすると新しい Gallery の `savedScrollY` は 0 になる(実測で確認)
+
 ---
 
 ## 7. UI/UX アーキテクチャ
@@ -316,10 +359,68 @@ play(el, keyframes, options)              // Web Animations API の単一入口(
 
 - ボトムシートは**初期状態でコラプス**(掴み手+見出しの帯のみ。高さは実測して `--sheet-h` に書き戻す。CSSのフォールバックは 3.5rem、実測例 63px)
 - **没入モード** — キャンバスをタップ(タッチのみ。マウスはオービット操作と衝突するためアイチップ専用)で全UIがフェード。Esc の優先順位は **① 没入モードの復元 → ② ドロワーを閉じる → ③ ギャラリー退出**
-- **セーフエリア補正** — `camera.setViewOffset` でシートやタブ分を避け、被写体が空き領域の中央に来る(実測111px上昇)
+- **セーフエリア補正(構図)** — `camera.setViewOffset` でシートやタブ分を避け、被写体が空き領域の中央に来る(実測111px上昇)
+- **セーフエリア補正(クローム / Phase 14a)** — 下記 7.5
 - **縦持ちドリー** — 縦画面ではFOVが縦基準で横視野が3.46倍狭くなるため、カメラを最大1.6倍引く(可視幅3.81→6.10ユニット)
 - **全画面スクリムの禁止** — 文字可読性のための画面全体グラデーションはコントラストを59%奪う。テキストブロック直下の局所グラデーション(画面暗化は1/6)+2段シャドウで代替
 - 横持ちの短い画面(高さ<600px)はデスクトップのサイドドック配置へフォールバック
+
+### 7.5 セーフエリア(`env()` / Phase 14a)
+
+`index.html` は `viewport-fit=cover` を宣言しているのに、`env()` を**一度も読んでいなかった**。
+モバイルの `--hud-inset` は 16px で、iOS のホームインジケータ帯 34px の**内側**にチップが座り、
+さらに `#gallery-panel { bottom: 0 }` ── パネルを開く唯一の掴み手が、システムの
+スワイプアップ領域と重なっていた。
+
+**辺ごとに 4 本の派生変数を持つ。**
+
+```css
+--sa-t/-r/-b/-l: env(safe-area-inset-*, 0px);
+--hud-inset-r/-b/-l: calc(var(--hud-inset) + var(--sa-*));
+--gal-top-safe:      calc(var(--gal-top)   + var(--sa-t));
+--gal-gutter-l/-r:   calc(var(--gal-gutter) + var(--sa-l or r));
+```
+
+- **`--hud-inset` トークン自体に `env()` を混ぜてはならない** — このトークンは
+  `left:` / `right:` としても使われ、さらに `.s-hint` の**幅の式**にも入っている。
+  下辺のインセットが横方向の余白へ漏れる
+- **派生変数は積み上げの「底」にだけ使う** — `calc(var(--hud-inset-b) + var(--hud-stack) * 2)`。
+  段の側へ足すと段数ぶん二重に数える
+- モバイルのメディアクエリは `:root` の `--hud-inset` / `--gal-gutter` を差し替えるだけでよい。
+  カスタムプロパティは計算値時に解決されるので派生変数は自動的に追随する
+  (**メディアクエリ内で派生変数を再宣言しないこと**)
+
+**ボトムシートの下辺は 1 ルールしか触らない。**
+
+`#gallery-panel > .panel` に `padding-bottom: var(--sa-b)` を足す。それだけ。
+チップの柱を組む `calc(var(--sheet-h, 3.5rem) + …)` の 6 か所は**不可侵**。
+`box-sizing:border-box` なので padding は `max-height:46svh` の内側に入り、
+シートの占有高は変わらないまま、ガラスは物理下端まで届き、操作子だけが帯の上で止まる。
+
+ただし `Panel.publishSheetHeight()` の**畳んだときの実測はヘッダだけ**を測る
+(本体の遷移の途中の高さを拾わないため)。この余白はヘッダの矩形の外にあるので、
+`.panel` の `padding-bottom` を足さないと `--sheet-h` が `--sa-b` ぶん過小報告し、
+**チップがシートへ 34px 食い込む**(実測)。padding は静的な値なので、
+本体の遷移とは無関係という元の性質は保たれる。
+
+**上辺は TS を足さなくてよい** — `syncSafeArea()` は `tabsEl.getBoundingClientRect().bottom` を
+実測するので、CSS でタブ帯が下がれば `camera.setViewOffset` が自動で追随する。
+`engine.setSafeArea` に `env()` を持ち込むと同じ量の二重実装になりドリフトする。
+`perspectiveExhibit` のシザー矩形も同じ理由で実測のまま。
+
+インセットしないもの: `#gl`(全面)/ `#progress`(2px, aria-hidden)/ `.mq` マーキー。
+
+実測(375×812、`--sa-*` を t59 r44 b34 l44 で注入):
+
+| 量 | インセット 0 | 注入後 | 差 |
+|---|---|---|---|
+| `--sheet-h` | 63.1px | 97.1px | **+34**(二重計上なら +68) |
+| 展示カウンタ / 音 / 品質 / 没入チップの下端 | — | — | 各 **+34**(柱の段差 42px は不変) |
+| タブ帯 | — | — | 上 +59 / 左右 各 44 内側 |
+
+デスクトップでは `env()` が 0 を返すため、寸法は 1px も動かない。
+横持ち 667×375 でもサイドドックのタブ帯・ナビ・ヘッダ・パネルがすべてノッチを避け、
+`11rem` の予約(タブ帯右端とナビの間)は保たれる。
 
 ---
 
@@ -492,14 +593,24 @@ npm run build        # 静的ビルド → dist/
 npm run preview      # 本番ビルドの確認(:4173)
 ```
 
-デバッグ用 URL パラメータ: `?exhibit=hopf|clifford|polytope|perspective`(物語を迂回して展示単体を起動)
+URL パラメータ:
+
+| パラメータ | 役割 |
+|---|---|
+| `?gallery=hopf\|clifford\|polytope\|perspective` | **公開仕様**。ギャラリーの指定展示へ直行する共有可能なリンク(§6.1) |
+| `?exhibit=hopf\|clifford\|polytope\|perspective` | **デバッグ用**。物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。シェルを DOM から削除するので**共有には使えない** |
+
+両者は決して重ねない。`?exhibit=` が先に判定され、そのとき Router は構築されない。
 
 DEVフック `window.__DIMENSION__` はブートパスによって形が異なる:
 
 | 起動 | 内容 |
 |---|---|
-| 通常(物語) | `engine, narrative, scrollDirector, overlays, quality, gallery(初回入場まで null), grade(on), enterGallery(), exitGallery(), setScroll(y), renderOnce(steps), audio` |
+| 通常(物語) | `engine, narrative, scrollDirector, overlays, quality, router, gallery(初回入場まで null), grade(on), enterGallery(), exitGallery(), setScroll(y), renderOnce(steps), audio` |
 | `?exhibit=` | `engine, exhibit, quality, grade(on), renderOnce(steps), audio` |
+
+`enterGallery()` / `exitGallery()` は**履歴経由**なので、ヘッドレス検証も本番と同じ経路
+(URL 更新・戻るの行き先)を通る。
 
 `renderOnce(steps)` はブラウザペイン非表示で rAF が止まる環境でも合成フレームを進めて1枚描画するための検証用。
 
