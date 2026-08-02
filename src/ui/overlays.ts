@@ -1,5 +1,6 @@
 import type { ScrollDirector } from '../core/scrollDirector';
 import type { Chapter } from './content';
+import type { Announcer } from './components/Announcer';
 import { DUR, EASE, cancelAll, play } from './components/component';
 import {
   reveal as revealSplit,
@@ -159,7 +160,10 @@ export function buildNarrativeDOM(root: HTMLElement, chapters: readonly Chapter[
     const tail: HTMLElement[] = [];
 
     // 章番号の行: CH.04 ── 4D
+    // lang="en" は器に 1 つで足りる(.ch-index-no と .ch-index-dim を覆う。
+    // あいだの .ch-rule は aria-hidden なので関係しない)
     const indexRow = makeEl('p', 'ch-index');
+    indexRow.lang = 'en';
     indexRow.append(makeEl('span', 'ch-index-no', chapter.index));
     if (chapter.unit !== undefined) {
       const rule = makeEl('span', 'ch-rule');
@@ -180,6 +184,14 @@ export function buildNarrativeDOM(root: HTMLElement, chapters: readonly Chapter[
     // 見出し階層: プロローグの英字が h1、日本語タイトルが h2。以降は h2 / h3
     const isPrologue = chapter.role === 'prologue';
     const en = makeEl(isPrologue ? 'h1' : 'h2', 'ch-en', chapter.en);
+    /*
+      日本語 TTS が TESSERACT / HEXERACT を綴り読みしないようにする(Phase 14b)。
+
+      SplitText は replaceChildren しか呼ばず、restore() が外すのは aria-label だけ。
+      つまり**静的に書いた lang はリサイズの再分割を生き延びる**。
+      逆に SplitText の内部で lang を付けてはならない ── restore() が漏らす。
+    */
+    en.lang = 'en';
     // 文字数に応じてディスプレイサイズを決める(長い語ほど小さく = 常に画面幅に収まる)
     en.style.setProperty('--len', String(chapter.en.length));
 
@@ -193,7 +205,9 @@ export function buildNarrativeDOM(root: HTMLElement, chapters: readonly Chapter[
       const rail = makeEl('span', 'ch-hint-rail');
       rail.setAttribute('aria-hidden', 'true');
       rail.append(makeEl('span', 'ch-hint-dot'));
-      hint.append(rail, makeEl('span', 'ch-hint-label', chapter.hint));
+      const label = makeEl('span', 'ch-hint-label', chapter.hint);
+      label.lang = 'en'; // "SCROLL"
+      hint.append(rail, label);
       inner.append(hint);
       tail.push(hint);
     }
@@ -240,12 +254,21 @@ interface OverlayOptions {
   readonly director: ScrollDirector;
   readonly chapters: readonly Chapter[];
   readonly dom: NarrativeDom;
+  /** 章の境界を告げるライブリージョン(Phase 14b)。無くても成立する */
+  readonly announcer?: Announcer;
 }
 
 export class Overlays {
   private readonly director: ScrollDirector;
   private readonly dom: NarrativeDom;
   private readonly words: readonly string[];
+  /**
+   * 章ごとの読み上げ文。**コンストラクタで前計算する**。
+   * update() の中でテンプレートリテラルを組むと、それだけでフレーム経路に
+   * アロケーションが生まれる(ゼロアロケーション契約 / SPEC §4.2)。
+   */
+  private readonly announcements: readonly string[];
+  private readonly announcer: Announcer | null;
 
   /** 章ごとの状態と、そのとき走っているアニメーション */
   private readonly states: Uint8Array;
@@ -276,7 +299,14 @@ export class Overlays {
 
     this.director = director;
     this.dom = dom;
+    this.announcer = options.announcer ?? null;
     this.words = chapters.map((c) => c.en);
+    // 「第四章 4D 四つ目の方向」/「序章 見えない次元へ」。
+    // 本文は読まない ── .ch-body は読み取りカーソルが既に到達できる実テキストで、
+    // ライブリージョンへ流すと物語を丸ごと二重に喋ることになる
+    this.announcements = chapters.map((c) =>
+      `${c.caption} ${c.unit ?? ''} ${c.jp.title}`.replace(/\s+/g, ' ').trim(),
+    );
 
     const n = chapters.length;
     this.states = new Uint8Array(n);
@@ -392,12 +422,15 @@ export class Overlays {
       }
     }
 
-    if (this.hudWord !== null) {
-      const index = this.director.chapterIndex;
-      if (index !== this.lastWordIndex) {
-        this.hudWord.textContent = this.words[index] ?? '';
-        this.lastWordIndex = index;
-      }
+    // 章の境界。比較は 1 本のまま(lastWordIndex を再利用する)なので、
+    // 毎フレームのコストは増えない ── 増えるのは状態が変わったフレームだけ
+    const index = this.director.chapterIndex;
+    if (index !== this.lastWordIndex) {
+      this.lastWordIndex = index;
+      if (this.hudWord !== null) this.hudWord.textContent = this.words[index] ?? '';
+      // armed の前はプリローダ自身が role="status" を持っている。
+      // 2 つのライブリージョンが同時に喋らないよう、幕が上がってから告げる
+      if (this.armed) this.announcer?.announce(this.announcements[index] ?? '');
     }
 
     if (this.progressBar !== null) {

@@ -396,6 +396,73 @@ beat = 2 + (4/3) × dimLevel      [Hz]
 - 章テキストは実HTML(スクリーンリーダー・検索エンジン対応)。SplitTextは aria-label とspanの aria-hidden で原文を保持
 - 音響は既定OFF・完全オプトイン。光過敏性は視覚由来のため非該当だが、アイソクロニック(強い振幅パルス)は**採用しない**方針
 
+### 9.1 作品の名前と、状態を告げる一行(Phase 14b)
+
+**キャンバスには `role="img"` と静的な `aria-label`** を与える。これが無いあいだ、
+作品そのものが支援技術に対して存在していなかった。
+
+名前を状態に追従させないのは意図的で、**非ライブ要素の名前の変化はどの支援技術でも
+確実には読まれず、読む実装の上では騒音になる**ため。加えて毎状態で書けばフレーム経路に
+DOM 書き込みが増え、ゼロアロケーション契約(§4.2)を壊す。
+
+変わる情報は `Announcer`(`src/ui/components/Announcer.ts`)が受け持つ ──
+`.sr-only` + `role="status" aria-live="polite"` の一行。
+
+- **`<body>` 直下に置く。これは要件であって好みではない。** 候補はすべて既存のルールで
+  失格する: `#hud` は `aria-hidden`(**この設定は意図した設計であり、変えない** ──
+  0.01 刻みで数を読み上げても騒音にしかならず、`ImmersiveToggle` と `Gallery` が
+  チップを `#hud` の外へ置いているのも同じ理由)/ `#narrative` はギャラリーで
+  `visibility:hidden` / `#gallery` は物語で `hidden` / `body.ui-hidden` の集合は
+  没入モードで `visibility:hidden`
+- **合流窓 220ms** — 速いフリックは 9 章の境界を続けざまに跨ぐ。1 つずつ書くと
+  `aria-live="polite"` が行列を作り、指を止めたあとも読み上げが続く。
+  窓のあいだに届いたものは**最後の 1 つだけ**を書く(実測: 4 章の高速通過 → 1 回)
+- **書き込み点は 2 か所だけ**。物語は `overlays.update()` の
+  `index !== lastWordIndex` ── **既存の比較を再利用する**ので毎フレームのコストは増えない。
+  ギャラリーは `Gallery.applyInfo()`(展示切替の唯一の絞り点)。どちらも状態が
+  変わったフレームでしか DOM に触らない
+- 読み上げ文は**コンストラクタで前計算**する。`update()` の中でテンプレートリテラルを
+  組むと、それだけでフレーム経路にアロケーションが生まれる
+- 文面は章の題まで(本文は読まない ── 読み取りカーソルが既に到達できる実テキストで、
+  流せば物語を丸ごと二重に喋ることになる)。展示は**日本語名**で告げ、
+  ライブリージョン内の英語 TTS 問題を最初から避ける
+- `armed` が立つまで黙る ── その前はプリローダ自身が `role="status"` を持っており、
+  2 つのライブリージョンが同時に喋る
+
+### 9.2 ランドマークと見出し(Phase 14b)
+
+物語とギャラリーは排他なので、**ランドマークもそこで交代する**。
+
+- `#gallery` を `<main>` にした。以前は素の `<div>` で、ギャラリーモードでは
+  `#narrative`(唯一の `<main>`)が `visibility:hidden` になるため、
+  ランドマークが `<nav>` だけの画面になっていた
+- `#gallery-head` に `role="group"` — `<header>` が sectioning content の子でないと
+  `role="banner"`(ページ級ランドマーク)にマップされ、モードの出入りで出没する
+- `#gallery-en` を `h2` → `h1` へ。以前はギャラリーモードに `h1` が 1 つも無かった
+- 実測: どちらのモードでも**露出しているランドマーク `main` は 1 つ、`h1` も 1 つ**。
+  視覚は 1px も変わらない(スタイルはすべて id / class 基準)
+
+### 9.3 `lang="en"` の棚卸し(Phase 14b)
+
+`<html lang="ja">` の配下で、日本語 TTS が `TESSERACT` / `HOPF FIBRATION` を
+綴り読みしていた。`h()` は未知のキーを `setAttribute` へ素通しするのでビルダーの変更は不要。
+
+`SplitText` は `replaceChildren` しか呼ばず `restore()` が外すのは `aria-label` だけなので、
+**静的に書いた `lang` はリサイズの再分割を生き延びる**。
+逆に **`SplitText` の内部で `lang` を設定してはならない**(`restore()` が漏らす)。
+
+| 付ける | 付けない(`aria-hidden` なので無意味) |
+|---|---|
+| `.ch-index`(器に1つで `.ch-index-no` と `.ch-index-dim` を覆う)/ `.ch-en` / `.ch-hint-label` / `#gallery-index` / `#gallery-en` / `.gh-about-en` / `.gal-tab-en` / `.panel-kicker-text` / `#quality`(器に1つで `.q-opt`×4 と `.q-readout` を覆う) | `.ch-coord` / `.ch-caption` / `.ch-rule` / `.ch-hint-rail` / `.cta-arrow` / `.mq` / `#hud` 配下すべて / `.pl-mark` |
+
+- **`aria-hidden` の方が正しいもの**: `.nav-en`("STORY"/"GALLERY")は `.nav-jp` の
+  純粋な重複。名前が「物語」「ギャラリー」になる
+- **言い換えでしか直らないもの**: `aria-label` 文字列の途中に `lang` は付けられない。
+  `SoundToggle` の `'環境音 SOUND'` → `'環境音'`(可視ラベルの SOUND は装飾なので名前に要らない)
+- **残余(意図的に直していない)**: ドロワー題は `` `${info.jp} / ${info.en}` `` の
+  1 テキストノードで、`aria-labelledby` 経由でダイアログ名になる。半分だけ言語指定する
+  方法はない。EN を落とすのは**設計変更**なので a11y の変更に混ぜない
+
 ---
 
 ## 10. パフォーマンス

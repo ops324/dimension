@@ -88,7 +88,7 @@ export class Tabs implements Component {
 
       tab.append(
         index,
-        h('span', 'gal-tab-en', { text: item.en }),
+        h('span', 'gal-tab-en', { text: item.en, lang: 'en' }),
         h('span', 'gal-tab-jp', { text: item.jp }),
       );
       tab.addEventListener('click', this.onClick);
