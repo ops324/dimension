@@ -27,6 +27,7 @@ import { Preloader } from './ui/components/Preloader';
 import { createCursor } from './ui/components/Cursor';
 import { magnetize } from './ui/components/MagneticButton';
 import { createSoundToggle } from './ui/components/SoundToggle';
+import { createAnnouncer } from './ui/components/Announcer';
 import { audio } from './audio/engine';
 import { initAudioWiring, type AudioWiring } from './audio/wiring';
 
@@ -250,8 +251,16 @@ function bootNarrative(): void {
   narrative.scene.add(starfield.group);
   engine.setScene(narrative.scene);
 
+  /*
+    状態の変化を告げる一行(Phase 14b)。**<body> 直下**に立てる ── #hud は
+    aria-hidden、#narrative はギャラリーで visibility:hidden、#gallery は物語で
+    hidden、body.ui-hidden の集合は没入モードで visibility:hidden になるので、
+    どこへ入れても「必要なときに黙る」領域になってしまう。
+  */
+  const announcer = createAnnouncer(document.body);
+
   // 4) テキストオーバーレイ(振り付け・HUD・進捗バー・CTA)
-  const overlays = new Overlays({ director: scrollDirector, chapters: CHAPTERS, dom });
+  const overlays = new Overlays({ director: scrollDirector, chapters: CHAPTERS, dom, announcer });
 
   /**
    * 5) ギャラリーは**初回入場時に初めて構築する**。
@@ -261,7 +270,15 @@ function bootNarrative(): void {
   let gallery: Gallery | null = null;
   const ensureGallery = (): Gallery => {
     if (gallery === null) {
-      gallery = new Gallery({ engine, canvas, starfield, narrative, scrollDirector, router });
+      gallery = new Gallery({
+        engine,
+        canvas,
+        starfield,
+        narrative,
+        scrollDirector,
+        router,
+        announcer,
+      });
     }
     return gallery;
   };

@@ -105,7 +105,7 @@ class Panel implements PanelBuilder, Component {
     const kicker = h('div', 'panel-kicker');
     kicker.append(
       h('span', 'panel-tick', { 'aria-hidden': 'true' }),
-      h('span', 'panel-kicker-text', { text: 'PARAMETERS' }),
+      h('span', 'panel-kicker-text', { text: 'PARAMETERS', lang: 'en' }),
       h('span', 'panel-rule', { 'aria-hidden': 'true' }),
     );
 

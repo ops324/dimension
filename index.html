@@ -41,8 +41,15 @@
     </noscript>
   </head>
   <body>
-    <!-- 全画面の固定キャンバス。配置は style.css の #gl が担う -->
-    <canvas id="gl"></canvas>
+    <!--
+      全画面の固定キャンバス。配置は style.css の #gl が担う。
+
+      role="img" + **静的な** aria-label(Phase 14b)。これが無いあいだ、作品そのものが
+      支援技術に対して存在していなかった。名前を状態に追従させないのは、
+      非ライブ要素の名前の変化はどの支援技術でも確実には読まれず、読む実装の上では
+      騒音になるため ── 変わる情報は Announcer(ライブリージョン)が受け持つ。
+    -->
+    <canvas id="gl" role="img" aria-label="高次元図形のリアルタイム可視化"></canvas>
 
     <!-- スクロール進捗バー(2px・シアン→マゼンタ) -->
     <div id="progress" aria-hidden="true"><div id="progress-bar"></div></div>
@@ -56,7 +63,7 @@
       <section class="chapter" data-role="prologue" data-align="left" data-ch="0">
         <div class="pin">
           <div class="chapter-inner">
-            <h1 class="ch-en" style="--len: 9">DIMENSION</h1>
+            <h1 class="ch-en" lang="en" style="--len: 9">DIMENSION</h1>
             <h2 class="ch-title">見えない次元へ</h2>
             <p class="ch-body">
               人間の目は、三つの方向しか受けとれない。縦と、横と、奥ゆき。それでも数学は、その先へ進むことができる
@@ -90,10 +97,12 @@
     -->
     <nav id="mode-nav" aria-label="モード切替">
       <button type="button" class="nav-pill" data-mode="narrative">
-        <span class="nav-jp">物語</span><span class="nav-en">STORY</span>
+        <span class="nav-jp">物語</span
+        ><span class="nav-en" aria-hidden="true">STORY</span>
       </button>
       <button type="button" class="nav-pill" data-mode="gallery">
-        <span class="nav-jp">ギャラリー</span><span class="nav-en">GALLERY</span>
+        <span class="nav-jp">ギャラリー</span
+        ><span class="nav-en" aria-hidden="true">GALLERY</span>
       </button>
     </nav>
 
@@ -102,17 +111,28 @@
       展示レジストリと content.ts の EXHIBIT_INFO から構築する。
       ここに置くのは器だけ ── 器の id が gallery.ts との契約になっている。
     -->
-    <div id="gallery" hidden>
+    <!--
+      ギャラリーは物語と**排他**なので、ランドマークもここで交代する(Phase 14b)。
+      物語モードでは #narrative が <main>、ギャラリーモードでは #narrative が
+      visibility:hidden になるため、こちらが main を名乗らないと
+      「ランドマークが <nav> だけの画面」になる。
+    -->
+    <main id="gallery" hidden>
       <div id="gallery-tabs" role="tablist" aria-label="展示の切り替え"></div>
 
-      <header id="gallery-head">
-        <p class="gh-index" id="gallery-index">EXHIBIT 01</p>
-        <h2 class="gh-en" id="gallery-en">HOPF FIBRATION</h2>
+      <!--
+        role="group" で banner を打ち消す。<header> が sectioning content の
+        子でないと role=banner(ページ級ランドマーク)にマップされ、
+        モードの出入りでランドマークが出没してしまう。
+      -->
+      <header id="gallery-head" role="group" aria-labelledby="gallery-en">
+        <p class="gh-index" id="gallery-index" lang="en">EXHIBIT 01</p>
+        <h1 class="gh-en" id="gallery-en" lang="en">HOPF FIBRATION</h1>
         <p class="gh-jp" id="gallery-jp">ホップ・ファイブレーション</p>
         <p class="gh-tagline" id="gallery-tagline"></p>
         <button type="button" id="about-toggle" class="gh-about" aria-expanded="false">
           <span class="gh-about-jp">解説</span>
-          <span class="gh-about-en">ABOUT THIS</span>
+          <span class="gh-about-en" lang="en">ABOUT THIS</span>
         </button>
       </header>
 
@@ -133,13 +153,13 @@
         </div>
         <div class="dw-body" id="drawer-body"></div>
       </aside>
-    </div>
+    </main>
 
     <!--
       描画品質セレクタ(AUTO・ULTRA・HIGH・BALANCED)。中身は src/core/quality.ts が
       構築する ── ここに置くのは器と、style.css が参照する id だけ。
     -->
-    <div id="quality"></div>
+    <div id="quality" lang="en"></div>
 
     <!--
       モード遷移の幕は src/ui/components/TransitionOverlay.ts が自分で生成する

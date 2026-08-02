@@ -21,6 +21,7 @@ import { Drawer } from '../ui/components/Drawer';
 import { createHud, type Hud } from '../ui/components/Hud';
 import { ImmersiveToggle } from '../ui/components/ImmersiveToggle';
 import { SHEET_LAYOUT_QUERY } from '../ui/components/component';
+import type { Announcer } from '../ui/components/Announcer';
 
 /**
  * ギャラリーのモード状態機械(プラン3節)。
@@ -99,6 +100,8 @@ export interface GalleryOptions {
   readonly scrollDirector: ScrollDirector;
   /** URL と履歴。モードの出入りはすべてここを通る(Phase 13) */
   readonly router: Router;
+  /** 展示の切り替えを告げるライブリージョン(Phase 14b)。無くても成立する */
+  readonly announcer?: Announcer;
 }
 
 /** タブ切替の reveal フェードアウト待ち(ms)。展示側の REVEAL_RATE と噛み合う値 */
@@ -130,6 +133,7 @@ export class Gallery {
   private readonly narrative: Exhibit;
   private readonly scrollDirector: ScrollDirector;
   private readonly router: Router;
+  private readonly announcer: Announcer | null;
 
   private readonly exhibits = new Map<ExhibitId, Exhibit>();
   private readonly entries = new Map<ExhibitId, ExhibitEntry>();
@@ -203,6 +207,7 @@ export class Gallery {
     this.narrative = options.narrative;
     this.scrollDirector = options.scrollDirector;
     this.router = options.router;
+    this.announcer = options.announcer ?? null;
 
     for (const entry of EXHIBIT_REGISTRY) this.entries.set(entry.id, entry);
 
@@ -433,6 +438,8 @@ export class Gallery {
       const y = restoreY ?? this.savedScrollY;
       window.scrollTo(0, y);
       this.scrollDirector.remeasure();
+      // 章インデックスは変わらないので、これが無いと物語への復帰が無音になる
+      this.announcer?.announce('物語へ戻りました');
 
       this.busy = false;
       this.fade(false);
@@ -794,6 +801,13 @@ export class Gallery {
     this.drawer.setContent(`${info.jp} / ${info.en}`, info.explanation);
     this.hud?.setExhibit(index, total);
     this.tabs.setActive(id);
+    /*
+      読み上げは **info.jp**(日本語名)で告げる ── 日本語の TTS が
+      "HOPF FIBRATION" を綴り読みする問題を、ライブリージョンでは最初から避ける。
+      タグラインは足さない: 可視テキストであり、SplitText が aria-label と
+      .sr-only の複製で原文を保っているので、読み手はすでに到達できる。
+    */
+    this.announcer?.announce(`展示 ${index} / ${total} ${info.jp}`);
     // perspective の神視点インセットとパネルが重ならないよう、モードを CSS へ伝える
     this.rootEl.dataset.exhibit = id;
   }
