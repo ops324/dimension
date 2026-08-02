@@ -258,6 +258,49 @@ dimLevel=0 で点、1で線、3.5で立方体がテッセラクトへ半分押�
 - `expSmooth`(rate 6)でフレームレート非依存の平滑化
 - 物語→ギャラリーはスクロールハイジャックせず、エピローグのCTAボタンで明示遷移(scrollY保存・復元)
 
+### 6.1 URL と履歴(`src/core/route.ts` — Phase 13)
+
+モードと表示中の展示は **`?gallery=<exhibitId>`** に載る(物語 = パラメータ無し)。
+これが無かった頃は「展示を人に送れない」だけでなく、**ギャラリー入場後の戻る /
+iOS の端スワイプでサイトごと離脱していた**。
+
+| 操作 | 履歴 |
+|---|---|
+| 物語 → ギャラリー | 物語エントリへ `replaceState({d:'narrative', y:scrollY})` してから `pushState({d:'gallery', exhibit, owned:true})` |
+| タブ切替 | `replaceState` — **4展示で履歴を汚さない**(戻るは常に「入る前」へ帰る) |
+| Esc / トップナビ「物語」 | `owned` なら `history.back()`、深リンクなら `replaceState` |
+| popstate | URL を再パースして `Gallery.applyRoute()` へ。**Esc と同じ 1 本の階段**を降りる |
+
+判断の根拠:
+
+- **ハッシュは不可** — `#gallery` も `ch-prologue`…`ch-epilogue` も実在の id。フラグメント
+  スクロールは**物語の状態そのものである scrollY** を壊し、ScrollDirector の毎フレーム読みと食い合う
+- **パスは不可** — GitHub Pages に SPA フォールバックが無い。`/gallery/hopf` はリロードで
+  404 になり、`/dimension/` のサブパスも落ちる
+- **`?exhibit=` と重ねない(必須)** — `?exhibit=` は同じ4つの id を取る単独ブートで、
+  `#narrative` / `#hud` / `#gallery` / `#mode-nav` を **DOM から削除する**。共有リンクが
+  そちらへ落ちたら受け取った人はクローム無しの開発ハーネスに閉じ込められる。
+  `main.ts` は `?exhibit=` を**先に**判定し、そのとき Router は構築しない
+- URL は必ず `new URL(window.location.href)` から組む — サブパス配信・カスタムドメイン・
+  他のクエリ・ハッシュが、この層が何も知らないまま保たれる
+- **`owned` は履歴エントリ自身に焼く**。進む/戻るでエントリと一緒に旅するので往復しても
+  判定がずれず、リロードも越える。深リンク(エントリ0)では `back()` を**呼ばない** ──
+  呼べばサイトを離れる、まさに直そうとしているバグそのものになる
+- **没入モードとドロワーは履歴に入れない** — `setUiHidden` はキャンバスの素のタップから
+  到達するので、作品を見回すだけで履歴が溜まる
+- **遷移中の popstate は 1 つだけ預かる**(`pendingRoute`)。`enterGallery`/`exitGallery` は
+  `busy` で早期 return し void を返すので、popstate 側は却下を検知できない。`busy` は幕の
+  40+480+40 = **560ms** 続き、iOS の端スワイプ連打はこれより速い。落とすと**履歴インデックスが
+  恒久的にずれる**。10連打の実測で最終 URL と描画モードが一致することを確認済み
+- **深リンク入場は幕を張らない** — `.tx` は z-index 80、`.pl` は 90 なので、幕はプリローダの
+  **下**で動く。被せても 1.1 秒ぶん「止まったローダー」が伸びるだけになる
+- **`history.scrollRestoration` は `'auto'` のまま**。`ScrollDirector` の初フレーム処理
+  (リロード復帰時の 0 からの助走を防ぐ)がブラウザの自動復元の上に建っている。
+  実測: ギャラリーでリロード → 戻る、でブラウザは 2080 を復元したが、フェード
+  コールバック内(約250ms後)の `scrollTo(0, 6800)` が勝った。**競合しない**
+- 物語エントリに焼く `y` は `savedScrollY` が救えない唯一の場合のため ── ギャラリーに
+  居る状態でリロードすると新しい Gallery の `savedScrollY` は 0 になる(実測で確認)
+
 ---
 
 ## 7. UI/UX アーキテクチャ
@@ -425,14 +468,24 @@ npm run build        # 静的ビルド → dist/
 npm run preview      # 本番ビルドの確認(:4173)
 ```
 
-デバッグ用 URL パラメータ: `?exhibit=hopf|clifford|polytope|perspective`(物語を迂回して展示単体を起動)
+URL パラメータ:
+
+| パラメータ | 役割 |
+|---|---|
+| `?gallery=hopf\|clifford\|polytope\|perspective` | **公開仕様**。ギャラリーの指定展示へ直行する共有可能なリンク(§6.1) |
+| `?exhibit=hopf\|clifford\|polytope\|perspective` | **デバッグ用**。物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。シェルを DOM から削除するので**共有には使えない** |
+
+両者は決して重ねない。`?exhibit=` が先に判定され、そのとき Router は構築されない。
 
 DEVフック `window.__DIMENSION__` はブートパスによって形が異なる:
 
 | 起動 | 内容 |
 |---|---|
-| 通常(物語) | `engine, narrative, scrollDirector, overlays, quality, gallery(初回入場まで null), grade(on), enterGallery(), exitGallery(), setScroll(y), renderOnce(steps), audio` |
+| 通常(物語) | `engine, narrative, scrollDirector, overlays, quality, router, gallery(初回入場まで null), grade(on), enterGallery(), exitGallery(), setScroll(y), renderOnce(steps), audio` |
 | `?exhibit=` | `engine, exhibit, quality, grade(on), renderOnce(steps), audio` |
+
+`enterGallery()` / `exitGallery()` は**履歴経由**なので、ヘッドレス検証も本番と同じ経路
+(URL 更新・戻るの行き先)を通る。
 
 `renderOnce(steps)` はブラウザペイン非表示で rAF が止まる環境でも合成フレームを進めて1枚描画するための検証用。
 

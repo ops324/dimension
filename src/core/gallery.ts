@@ -4,6 +4,9 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import type { Engine } from './engine';
 import type { ScrollDirector } from './scrollDirector';
+// 型だけの import。verbatimModuleSyntax で消えるので route.ts ⇄ gallery.ts の
+// **実行時の循環参照は生じない**(route.ts は EXHIBIT_REGISTRY を値で使う)
+import type { Route, Router } from './route';
 import type { Starfield } from '../render/starfield';
 import type { Exhibit } from '../scenes/exhibit';
 import { HopfExhibit } from '../scenes/hopfExhibit';
@@ -94,6 +97,8 @@ export interface GalleryOptions {
   readonly narrative: Exhibit;
   /** 物語へ戻ったあとのセクション再計測に使う */
   readonly scrollDirector: ScrollDirector;
+  /** URL と履歴。モードの出入りはすべてここを通る(Phase 13) */
+  readonly router: Router;
 }
 
 /** タブ切替の reveal フェードアウト待ち(ms)。展示側の REVEAL_RATE と噛み合う値 */
@@ -124,6 +129,7 @@ export class Gallery {
   private readonly starfield: Starfield;
   private readonly narrative: Exhibit;
   private readonly scrollDirector: ScrollDirector;
+  private readonly router: Router;
 
   private readonly exhibits = new Map<ExhibitId, Exhibit>();
   private readonly entries = new Map<ExhibitId, ExhibitEntry>();
@@ -155,6 +161,14 @@ export class Gallery {
   private busy = false;
   private switchTimer = 0;
   private reduceMotion = false;
+  /**
+   * 遷移中に届いた popstate を 1 つだけ預かる枠(Phase 13)。
+   *
+   * enterGallery / exitGallery は `busy` で早期 return し **void を返す**ので、
+   * popstate 側は却下を検知できない。`busy` は幕の 40+480+40 = 560ms 続き、
+   * iOS の端スワイプ連打はこれより速い。落とすと**履歴インデックスが恒久的にずれる**。
+   */
+  private pendingRoute: Route | null = null;
 
   /** カメラトゥイーン(毎フレームのアロケーションを避けるため使い回す) */
   private readonly tweenTarget = new Vector3();
@@ -188,6 +202,7 @@ export class Gallery {
     this.starfield = options.starfield;
     this.narrative = options.narrative;
     this.scrollDirector = options.scrollDirector;
+    this.router = options.router;
 
     for (const entry of EXHIBIT_REGISTRY) this.entries.set(entry.id, entry);
 
@@ -268,16 +283,76 @@ export class Gallery {
     return this.activeId;
   }
 
+  // --- ルーティング ----------------------------------------------------------
+
+  /**
+   * popstate と初期ブートの**唯一の入口**。冪等。
+   *
+   * enterGallery / exitGallery / select は履歴を一切呼ばない ── 呼ぶのはここと
+   * requestEnter だけなので、再帰が構造的に起きない(suppress フラグが要らない)。
+   */
+  applyRoute(next: Route, instant = false): void {
+    // 幕が降りている最中は 1 つだけ預かる。捨てると履歴と画面が永久にずれる
+    if (this.busy || this.switchTimer !== 0) {
+      this.pendingRoute = next;
+      return;
+    }
+    if (next.mode === 'gallery') {
+      if (this.mode !== 'gallery') this.enterGallery(next.exhibit, instant);
+      else if (next.exhibit !== this.activeId) this.select(next.exhibit);
+    } else if (this.mode === 'gallery') {
+      this.exitGallery(next.scrollY);
+    }
+  }
+
+  /**
+   * 入場要求(終章の CTA / トップナビ / skip link)。
+   * 状態を先に変えず、**履歴へ書いてから** onRoute 経由で戻ってくる。
+   */
+  requestEnter(): void {
+    if (this.mode === 'gallery' || this.busy) return;
+    this.router.enter(this.activeId, window.scrollY);
+  }
+
+  /** 遷移が明けたら預かっていたルートを流す */
+  private flushRoute(): void {
+    const next = this.pendingRoute;
+    this.pendingRoute = null;
+    if (next !== null) this.applyRoute(next);
+  }
+
+  /**
+   * 隠しているものを 1 枚だけ戻す。戻すものが無ければ false(= 退場が次)。
+   * Esc の順序契約(没入 → ドロワー → 退場)の**解除側だけ**を切り出したもので、
+   * keydown と、履歴からの退場要求がこの 1 本を共有する。
+   */
+  private dismissTop(): boolean {
+    if (this.uiHidden) {
+      this.setUiHidden(false);
+      return true;
+    }
+    if (this.drawer.isOpen) {
+      this.closeDrawer();
+      return true;
+    }
+    return false;
+  }
+
   // --- モード遷移 ------------------------------------------------------------
 
   /**
    * 物語 → ギャラリー。
    * scrollY を保存し、250ms のフェードの**裏**でシーン・DOM を差し替える。
+   *
+   * `instant` は深リンク入場専用。幕(.tx = z-index 80)はプリローダ(.pl = 90)の
+   * **下**で動くので、そのまま被せると 1.1 秒ぶん「止まったローダー」に見えるだけになる。
    */
-  enterGallery(): void {
+  enterGallery(id?: ExhibitId, instant = false): void {
     if (this.mode === 'gallery' || this.busy) return;
     this.busy = true;
     this.savedScrollY = window.scrollY;
+    // 深リンクが常に hopf に落ちないよう、幕の前に指定された展示を立てておく
+    if (id !== undefined) this.activeId = id;
     // モード遷移が受理された合図(Phase 10 の音づけが購読する。誰も聞かなくても成立する)
     window.dispatchEvent(new CustomEvent<GalleryMode>('dimension:mode', { detail: 'gallery' }));
 
@@ -309,13 +384,19 @@ export class Gallery {
       this.syncSafeArea();
 
       this.busy = false;
-      this.fade(false);
+      this.fade(false, undefined, instant);
       console.info(`[gallery] enter → ${this.activeId}`);
-    });
+      this.flushRoute();
+    }, instant);
   }
 
-  /** ギャラリー → 物語。シーンは破棄していないので復帰は即時 */
-  exitGallery(): void {
+  /**
+   * ギャラリー → 物語。シーンは破棄していないので復帰は即時。
+   *
+   * `restoreY` は履歴エントリに焼かれた scrollY。ギャラリーに居る状態で
+   * リロードすると新しい Gallery の savedScrollY は 0 なので、これが唯一の手がかりになる。
+   */
+  exitGallery(restoreY: number | null = null): void {
     if (this.mode === 'narrative' || this.busy) return;
     this.busy = true;
     window.dispatchEvent(new CustomEvent<GalleryMode>('dimension:mode', { detail: 'narrative' }));
@@ -349,12 +430,14 @@ export class Gallery {
       this.narrative.enter();
 
       // スクロールバーが戻って高さが変わり得るので、位置を戻してから測り直す
-      window.scrollTo(0, this.savedScrollY);
+      const y = restoreY ?? this.savedScrollY;
+      window.scrollTo(0, y);
       this.scrollDirector.remeasure();
 
       this.busy = false;
       this.fade(false);
-      console.info(`[gallery] exit → narrative (scrollY=${Math.round(this.savedScrollY)})`);
+      console.info(`[gallery] exit → narrative (scrollY=${Math.round(y)})`);
+      this.flushRoute();
     });
   }
 
@@ -371,6 +454,9 @@ export class Gallery {
     this.active?.exit();
     // 切り替えが受理された合図(Phase 10 の音づけが購読する)
     window.dispatchEvent(new CustomEvent<ExhibitId>('dimension:tab', { detail: id }));
+    // URL を今の展示へ揃える。**replaceState なので popstate は起きず**、
+    // ここから applyRoute へ戻ってくる経路は無い(だから抑制フラグが要らない)
+    this.router.select(id);
     // タブの下線と見出しは**押した瞬間に**動きはじめる ── 展示の差し替えを
     // 待つ 380ms のあいだ、UI だけが先に次の展示を指している状態を作る
     this.tabs.setActive(id);
@@ -392,6 +478,7 @@ export class Gallery {
       // --sheet-h も構図のずらしも新しい高さへ揃え直す
       this.syncSafeArea();
       console.info(`[gallery] switch → ${id}`);
+      this.flushRoute();
     };
 
     if (this.reduceMotion) {
@@ -492,8 +579,9 @@ export class Gallery {
 
     for (const button of document.querySelectorAll<HTMLButtonElement>('#mode-nav [data-mode]')) {
       button.addEventListener('click', () => {
-        if (button.dataset.mode === 'gallery') this.enterGallery();
-        else this.exitGallery();
+        // モードの往復は必ず履歴を通す ── UI で出入りしても URL が嘘をつかない
+        if (button.dataset.mode === 'gallery') this.requestEnter();
+        else this.router.leave();
       });
     }
 
@@ -513,10 +601,9 @@ export class Gallery {
     window.addEventListener('keydown', (event) => {
       if (event.key === 'Escape' && this.mode === 'gallery') {
         // 順序は契約: 隠しているものから先に戻す。ここで止めないと
-        // 「作品だけを見ていた人が Esc で展示ごと退場させられる」ことになる
-        if (this.uiHidden) this.setUiHidden(false);
-        else if (this.drawer.isOpen) this.closeDrawer();
-        else this.exitGallery();
+        // 「作品だけを見ていた人が Esc で展示ごと退場させられる」ことになる。
+        // 退場だけは履歴を通す ── Esc と戻るが同じ 1 本の階段を降りる
+        if (!this.dismissTop()) this.router.leave();
       }
     });
   }
@@ -636,7 +723,13 @@ export class Gallery {
    * あいだに進む ── 幕と絵の立ち上がりが噛み合う。
    * reduced-motion では TransitionOverlay 側がアニメーションを使わず一瞬で切る。
    */
-  private fade(on: boolean, done?: () => void): void {
+  private fade(on: boolean, done?: () => void, instant = false): void {
+    // 幕を張らない経路(深リンク入場)。プリローダの下で 1.1 秒かけて
+    // 見えない幕を上げ下げするより、同期で差し替えてしまうほうが速くも正しくもある
+    if (instant) {
+      done?.();
+      return;
+    }
     if (on) {
       void this.transition.cover().then(() => done?.());
       return;
