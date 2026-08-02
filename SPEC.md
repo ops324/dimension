@@ -258,6 +258,49 @@ dimLevel=0 で点、1で線、3.5で立方体がテッセラクトへ半分押�
 - `expSmooth`(rate 6)でフレームレート非依存の平滑化
 - 物語→ギャラリーはスクロールハイジャックせず、エピローグのCTAボタンで明示遷移(scrollY保存・復元)
 
+### 6.1 URL と履歴(`src/core/route.ts` — Phase 13)
+
+モードと表示中の展示は **`?gallery=<exhibitId>`** に載る(物語 = パラメータ無し)。
+これが無かった頃は「展示を人に送れない」だけでなく、**ギャラリー入場後の戻る /
+iOS の端スワイプでサイトごと離脱していた**。
+
+| 操作 | 履歴 |
+|---|---|
+| 物語 → ギャラリー | 物語エントリへ `replaceState({d:'narrative', y:scrollY})` してから `pushState({d:'gallery', exhibit, owned:true})` |
+| タブ切替 | `replaceState` — **4展示で履歴を汚さない**(戻るは常に「入る前」へ帰る) |
+| Esc / トップナビ「物語」 | `owned` なら `history.back()`、深リンクなら `replaceState` |
+| popstate | URL を再パースして `Gallery.applyRoute()` へ。**Esc と同じ 1 本の階段**を降りる |
+
+判断の根拠:
+
+- **ハッシュは不可** — `#gallery` も `ch-prologue`…`ch-epilogue` も実在の id。フラグメント
+  スクロールは**物語の状態そのものである scrollY** を壊し、ScrollDirector の毎フレーム読みと食い合う
+- **パスは不可** — GitHub Pages に SPA フォールバックが無い。`/gallery/hopf` はリロードで
+  404 になり、`/dimension/` のサブパスも落ちる
+- **`?exhibit=` と重ねない(必須)** — `?exhibit=` は同じ4つの id を取る単独ブートで、
+  `#narrative` / `#hud` / `#gallery` / `#mode-nav` を **DOM から削除する**。共有リンクが
+  そちらへ落ちたら受け取った人はクローム無しの開発ハーネスに閉じ込められる。
+  `main.ts` は `?exhibit=` を**先に**判定し、そのとき Router は構築しない
+- URL は必ず `new URL(window.location.href)` から組む — サブパス配信・カスタムドメイン・
+  他のクエリ・ハッシュが、この層が何も知らないまま保たれる
+- **`owned` は履歴エントリ自身に焼く**。進む/戻るでエントリと一緒に旅するので往復しても
+  判定がずれず、リロードも越える。深リンク(エントリ0)では `back()` を**呼ばない** ──
+  呼べばサイトを離れる、まさに直そうとしているバグそのものになる
+- **没入モードとドロワーは履歴に入れない** — `setUiHidden` はキャンバスの素のタップから
+  到達するので、作品を見回すだけで履歴が溜まる
+- **遷移中の popstate は 1 つだけ預かる**(`pendingRoute`)。`enterGallery`/`exitGallery` は
+  `busy` で早期 return し void を返すので、popstate 側は却下を検知できない。`busy` は幕の
+  40+480+40 = **560ms** 続き、iOS の端スワイプ連打はこれより速い。落とすと**履歴インデックスが
+  恒久的にずれる**。10連打の実測で最終 URL と描画モードが一致することを確認済み
+- **深リンク入場は幕を張らない** — `.tx` は z-index 80、`.pl` は 90 なので、幕はプリローダの
+  **下**で動く。被せても 1.1 秒ぶん「止まったローダー」が伸びるだけになる
+- **`history.scrollRestoration` は `'auto'` のまま**。`ScrollDirector` の初フレーム処理
+  (リロード復帰時の 0 からの助走を防ぐ)がブラウザの自動復元の上に建っている。
+  実測: ギャラリーでリロード → 戻る、でブラウザは 2080 を復元したが、フェード
+  コールバック内(約250ms後)の `scrollTo(0, 6800)` が勝った。**競合しない**
+- 物語エントリに焼く `y` は `savedScrollY` が救えない唯一の場合のため ── ギャラリーに
+  居る状態でリロードすると新しい Gallery の `savedScrollY` は 0 になる(実測で確認)
+
 ---
 
 ## 7. UI/UX アーキテクチャ
@@ -454,6 +497,73 @@ beat = 2 + (4/3) × dimLevel      [Hz]
 - 章テキストは実HTML(スクリーンリーダー・検索エンジン対応)。SplitTextは aria-label とspanの aria-hidden で原文を保持
 - 音響は既定OFF・完全オプトイン。光過敏性は視覚由来のため非該当だが、アイソクロニック(強い振幅パルス)は**採用しない**方針
 
+### 9.1 作品の名前と、状態を告げる一行(Phase 14b)
+
+**キャンバスには `role="img"` と静的な `aria-label`** を与える。これが無いあいだ、
+作品そのものが支援技術に対して存在していなかった。
+
+名前を状態に追従させないのは意図的で、**非ライブ要素の名前の変化はどの支援技術でも
+確実には読まれず、読む実装の上では騒音になる**ため。加えて毎状態で書けばフレーム経路に
+DOM 書き込みが増え、ゼロアロケーション契約(§4.2)を壊す。
+
+変わる情報は `Announcer`(`src/ui/components/Announcer.ts`)が受け持つ ──
+`.sr-only` + `role="status" aria-live="polite"` の一行。
+
+- **`<body>` 直下に置く。これは要件であって好みではない。** 候補はすべて既存のルールで
+  失格する: `#hud` は `aria-hidden`(**この設定は意図した設計であり、変えない** ──
+  0.01 刻みで数を読み上げても騒音にしかならず、`ImmersiveToggle` と `Gallery` が
+  チップを `#hud` の外へ置いているのも同じ理由)/ `#narrative` はギャラリーで
+  `visibility:hidden` / `#gallery` は物語で `hidden` / `body.ui-hidden` の集合は
+  没入モードで `visibility:hidden`
+- **合流窓 220ms** — 速いフリックは 9 章の境界を続けざまに跨ぐ。1 つずつ書くと
+  `aria-live="polite"` が行列を作り、指を止めたあとも読み上げが続く。
+  窓のあいだに届いたものは**最後の 1 つだけ**を書く(実測: 4 章の高速通過 → 1 回)
+- **書き込み点は 2 か所だけ**。物語は `overlays.update()` の
+  `index !== lastWordIndex` ── **既存の比較を再利用する**ので毎フレームのコストは増えない。
+  ギャラリーは `Gallery.applyInfo()`(展示切替の唯一の絞り点)。どちらも状態が
+  変わったフレームでしか DOM に触らない
+- 読み上げ文は**コンストラクタで前計算**する。`update()` の中でテンプレートリテラルを
+  組むと、それだけでフレーム経路にアロケーションが生まれる
+- 文面は章の題まで(本文は読まない ── 読み取りカーソルが既に到達できる実テキストで、
+  流せば物語を丸ごと二重に喋ることになる)。展示は**日本語名**で告げ、
+  ライブリージョン内の英語 TTS 問題を最初から避ける
+- `armed` が立つまで黙る ── その前はプリローダ自身が `role="status"` を持っており、
+  2 つのライブリージョンが同時に喋る
+
+### 9.2 ランドマークと見出し(Phase 14b)
+
+物語とギャラリーは排他なので、**ランドマークもそこで交代する**。
+
+- `#gallery` を `<main>` にした。以前は素の `<div>` で、ギャラリーモードでは
+  `#narrative`(唯一の `<main>`)が `visibility:hidden` になるため、
+  ランドマークが `<nav>` だけの画面になっていた
+- `#gallery-head` に `role="group"` — `<header>` が sectioning content の子でないと
+  `role="banner"`(ページ級ランドマーク)にマップされ、モードの出入りで出没する
+- `#gallery-en` を `h2` → `h1` へ。以前はギャラリーモードに `h1` が 1 つも無かった
+- 実測: どちらのモードでも**露出しているランドマーク `main` は 1 つ、`h1` も 1 つ**。
+  視覚は 1px も変わらない(スタイルはすべて id / class 基準)
+
+### 9.3 `lang="en"` の棚卸し(Phase 14b)
+
+`<html lang="ja">` の配下で、日本語 TTS が `TESSERACT` / `HOPF FIBRATION` を
+綴り読みしていた。`h()` は未知のキーを `setAttribute` へ素通しするのでビルダーの変更は不要。
+
+`SplitText` は `replaceChildren` しか呼ばず `restore()` が外すのは `aria-label` だけなので、
+**静的に書いた `lang` はリサイズの再分割を生き延びる**。
+逆に **`SplitText` の内部で `lang` を設定してはならない**(`restore()` が漏らす)。
+
+| 付ける | 付けない(`aria-hidden` なので無意味) |
+|---|---|
+| `.ch-index`(器に1つで `.ch-index-no` と `.ch-index-dim` を覆う)/ `.ch-en` / `.ch-hint-label` / `#gallery-index` / `#gallery-en` / `.gh-about-en` / `.gal-tab-en` / `.panel-kicker-text` / `#quality`(器に1つで `.q-opt`×4 と `.q-readout` を覆う) | `.ch-coord` / `.ch-caption` / `.ch-rule` / `.ch-hint-rail` / `.cta-arrow` / `.mq` / `#hud` 配下すべて / `.pl-mark` |
+
+- **`aria-hidden` の方が正しいもの**: `.nav-en`("STORY"/"GALLERY")は `.nav-jp` の
+  純粋な重複。名前が「物語」「ギャラリー」になる
+- **言い換えでしか直らないもの**: `aria-label` 文字列の途中に `lang` は付けられない。
+  `SoundToggle` の `'環境音 SOUND'` → `'環境音'`(可視ラベルの SOUND は装飾なので名前に要らない)
+- **残余(意図的に直していない)**: ドロワー題は `` `${info.jp} / ${info.en}` `` の
+  1 テキストノードで、`aria-labelledby` 経由でダイアログ名になる。半分だけ言語指定する
+  方法はない。EN を落とすのは**設計変更**なので a11y の変更に混ぜない
+
 ### 9.4 たどれる順序(Phase 14c)
 
 **キーボードで作品を通り抜けられるか**は、それまで一度も検証されていなかった。
@@ -549,14 +659,24 @@ npm run build        # 静的ビルド → dist/
 npm run preview      # 本番ビルドの確認(:4173)
 ```
 
-デバッグ用 URL パラメータ: `?exhibit=hopf|clifford|polytope|perspective`(物語を迂回して展示単体を起動)
+URL パラメータ:
+
+| パラメータ | 役割 |
+|---|---|
+| `?gallery=hopf\|clifford\|polytope\|perspective` | **公開仕様**。ギャラリーの指定展示へ直行する共有可能なリンク(§6.1) |
+| `?exhibit=hopf\|clifford\|polytope\|perspective` | **デバッグ用**。物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。シェルを DOM から削除するので**共有には使えない** |
+
+両者は決して重ねない。`?exhibit=` が先に判定され、そのとき Router は構築されない。
 
 DEVフック `window.__DIMENSION__` はブートパスによって形が異なる:
 
 | 起動 | 内容 |
 |---|---|
-| 通常(物語) | `engine, narrative, scrollDirector, overlays, quality, gallery(初回入場まで null), grade(on), enterGallery(), exitGallery(), setScroll(y), renderOnce(steps), audio` |
+| 通常(物語) | `engine, narrative, scrollDirector, overlays, quality, router, gallery(初回入場まで null), grade(on), enterGallery(), exitGallery(), setScroll(y), renderOnce(steps), audio` |
 | `?exhibit=` | `engine, exhibit, quality, grade(on), renderOnce(steps), audio` |
+
+`enterGallery()` / `exitGallery()` は**履歴経由**なので、ヘッドレス検証も本番と同じ経路
+(URL 更新・戻るの行き先)を通る。
 
 `renderOnce(steps)` はブラウザペイン非表示で rAF が止まる環境でも合成フレームを進めて1枚描画するための検証用。
 

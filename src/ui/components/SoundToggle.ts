@@ -95,7 +95,9 @@ export class SoundToggle implements Component {
       id: 'sound-chip',
       type: 'button',
       'data-cursor': '',
-      'aria-label': '環境音 SOUND',
+      // 混在した文字列に lang は付けられない ── 言い換えでしか直らない。
+      // 可視ラベルの「SOUND」は装飾なので、名前は日本語だけで足りる
+      'aria-label': '環境音',
       'aria-pressed': 'false',
     });
 
