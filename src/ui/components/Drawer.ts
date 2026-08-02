@@ -38,6 +38,11 @@ const TITLE_MS = 620;
 /** 段落の立ち上がり(px) */
 const RISE = 10;
 
+/** 焦点の閉じ込めが巡回する対象(Phase 14c)。押された瞬間に数え直す */
+const FOCUSABLE =
+  'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
+  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
 export class Drawer implements Component {
   readonly el: HTMLElement;
 
@@ -69,6 +74,15 @@ export class Drawer implements Component {
     this.scrim.addEventListener('click', this.onScrim);
     this.el.parentElement?.insertBefore(this.scrim, this.el);
 
+    /*
+      本文にキーボードの停留点を与える(Phase 14c)。
+
+      .dw-body は overflow-y: auto なのに、これまでキーボードでスクロールする手段が
+      無かった。焦点の閉じ込めを足すと、これが無いと停留点が ✕ 1 つだけになり
+      Tab が無反応になる ── 準拠を実際の改善へ変える 1 行でもある。
+    */
+    this.bodyEl.tabIndex = 0;
+
     this.closeEl.addEventListener('click', this.onClose);
     this.closeEl.setAttribute('data-cursor', '');
     this.magnet = magnetize(this.closeEl, { radius: 70, strength: 0.35, max: 6, labelMax: 6 });
@@ -95,6 +109,7 @@ export class Drawer implements Component {
     this.el.classList.add('is-open');
     this.el.setAttribute('aria-hidden', 'false');
     this.scrim.dataset.on = 'true';
+    this.el.addEventListener('keydown', this.onKeyDown);
     this.reveal();
     this.focusClose();
   }
@@ -103,6 +118,12 @@ export class Drawer implements Component {
     if (!this.open) return;
     this.open = false;
     this.stop();
+    /*
+      リスナは**ここで外す**。is-open のトランジション(0.38s)の完了に載せてはならない ──
+      exitGallery() は closeDrawer() と rootEl.hidden = true を同じ同期ブロックで
+      実行するので、遅らせると display:none のサブツリーへフォーカスを跳ね返そうとする。
+    */
+    this.el.removeEventListener('keydown', this.onKeyDown);
     this.el.classList.remove('is-open');
     this.el.setAttribute('aria-hidden', 'true');
     this.scrim.dataset.on = 'false';
@@ -111,6 +132,7 @@ export class Drawer implements Component {
   destroy(): void {
     this.stop();
     this.magnet.destroy();
+    this.el.removeEventListener('keydown', this.onKeyDown);
     this.closeEl.removeEventListener('click', this.onClose);
     this.scrim.removeEventListener('click', this.onScrim);
     this.scrim.remove();
@@ -120,6 +142,40 @@ export class Drawer implements Component {
 
   private readonly onClose = (): void => this.onRequestClose();
   private readonly onScrim = (): void => this.onRequestClose();
+
+  /**
+   * 焦点の閉じ込め(Phase 14c)。
+   *
+   * `role="dialog" aria-modal="true"` を宣言している以上、Tab が背後へ抜けるのは
+   * 仕様違反である。にもかかわらずここまで Tab の制御は 1 行も無かった。
+   *
+   * **Escape はここでは扱わない。** 順序の契約(没入 → ドロワー → 退場)は
+   * gallery.ts の window リスナ 1 本が持っており、ここで拾うと二重に閉じる。
+   *
+   * 兄弟を inert にする案は採らない ── 7 要素(うち 1 つは展示ごとに作り直される)へ
+   * 触ることになり、遷移の途中で例外が飛べばページが恒久的に inert になる。
+   */
+  private readonly onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Tab' || !this.open) return;
+    // 押された瞬間に数える。**キャッシュしない** ── setContent が本文を差し替え、
+    // reveal() が見出しを再分割するので、作り置きした一覧はすぐ古くなる
+    const items = this.el.querySelectorAll<HTMLElement>(FOCUSABLE);
+    if (items.length === 0) return;
+    const first = items[0];
+    const last = items[items.length - 1];
+    const active = document.activeElement;
+    if (event.shiftKey) {
+      if (active === first || !this.el.contains(active)) {
+        event.preventDefault();
+        last.focus();
+      }
+      return;
+    }
+    if (active === last || !this.el.contains(active)) {
+      event.preventDefault();
+      first.focus();
+    }
+  };
 
   /**
    * ダイアログを開いたらフォーカスを ✕ へ渡す。

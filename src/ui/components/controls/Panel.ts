@@ -127,6 +127,8 @@ class Panel implements PanelBuilder, Component {
     this.body = h('div', 'panel-body');
     panel.append(head, this.body);
     root.append(panel);
+    // 起動時は畳んだ状態(index.html が is-collapsed を持つ)。器が本体を隠す前に合わせる
+    this.syncInert(root.classList.contains('is-collapsed'));
 
     this.element = panel;
 
@@ -229,6 +231,7 @@ class Panel implements PanelBuilder, Component {
   private readonly onGrab = (): void => {
     const collapsed = this.root.classList.toggle('is-collapsed');
     this.grab.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    this.syncInert(collapsed);
     // 折り畳みの終値は「つまみ + 見出し」の高さで**遷移を待たずに確定できる**ので
     // 即座に配り、展開側は 340ms 後の実測で仕上げる(初回だけ遅れる)
     this.publishSheetHeight();
@@ -252,9 +255,34 @@ class Panel implements PanelBuilder, Component {
     this.resizeTimer = window.setTimeout(this.onResizeSettled, RESIZE_DEBOUNCE_MS);
   };
 
+  /**
+   * 畳んだシートの中身をタブ順から外す(Phase 14c)。
+   *
+   * 折り畳みは `max-height: 0; opacity: 0; overflow: hidden` で作られている ──
+   * display:none でも visibility:hidden でも inert でもないので、**畳んだままの
+   * スライダー・セグメント・トグルが十数個、そっくりタブ順に残っていた**。
+   * つまみから Tab すると不可視のコントロールを延々と通過することになり、
+   * スキップリンクを足す意味を正面から損なう。
+   *
+   * `role="tabpanel"` と aria-controls の関係は既に正しいので触らない ──
+   * ここで閉じるのは順序だけである。
+   *
+   * **ボトムシート版レイアウトのときだけ**であることが要件(実測で踏んだ)。
+   * `is-collapsed` は器に常時付いているが、折り畳みの CSS は
+   * SHEET_LAYOUT_QUERY の中にしか無い ── デスクトップの側面ドックは
+   * `is-collapsed` のままでも全開なので、そこで inert にすると
+   * **見えている操作子がキーボードから消える**。
+   */
+  private syncInert(collapsed: boolean): void {
+    const sheet = window.matchMedia?.(SHEET_LAYOUT_QUERY).matches ?? false;
+    this.body.inert = collapsed && sheet;
+  }
+
   private readonly onResizeSettled = (): void => {
     this.resizeTimer = 0;
     this.lastExpanded = 0; // 幅が変われば展開時の高さも変わる
+    // 回転や幅変更でシート版 ⇄ 側面ドックが入れ替わりうる。タブ順も揃え直す
+    this.syncInert(this.root.classList.contains('is-collapsed'));
     this.publishSheetHeight(true);
   };
 

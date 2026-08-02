@@ -1588,6 +1588,43 @@ body.mode-gallery #perspective-caption {
   line-height: 0;
 }
 
+/* ------------------------------------------------------ スキップリンク
+
+   Phase 14c。**視覚コストはゼロ** ── :focus-visible でしか現れないので、
+   キーボードで操作していない人の視界には入らない。
+
+   z-index はプリローダ(90)と幕(80)より上に置く: 幕が上がる前でも Tab で
+   到達できてしまう以上、そこで見えないのは「不可視のボタン」を作り直すのと同じ。
+   位置は --sa-t / --sa-l の上(Phase 14a)。
+*/
+
+.skip {
+  position: fixed;
+  top: calc(var(--s3) + var(--sa-t));
+  left: calc(var(--s3) + var(--sa-l));
+  z-index: 110;
+  padding: 0.6rem 1.1rem;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: rgba(10, 12, 24, 0.92);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 0.78rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  line-height: 1;
+  cursor: pointer;
+  /* 既定は画面の外。display:none にはしない ── タブ順から消えては意味がない */
+  transform: translateY(-200%);
+  transition: transform var(--t-fast) var(--ease-out-quint);
+}
+
+.skip:focus-visible {
+  transform: none;
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+}
+
 /* ------------------------------------------------------- トップナビ */
 
 #mode-nav {
@@ -1691,6 +1728,19 @@ body.mode-gallery #quality {
   left: var(--hud-inset-l);
   bottom: calc(var(--hud-inset-b) + var(--pill-h) + var(--s2));
   align-items: flex-start;
+}
+
+/*
+  解説を開いているあいだトップナビは退く(Phase 14c)。
+
+  .dw-scrim は #gallery の中の z-index 4 で、#mode-nav は 5 ── つまり暗幕は
+  ピルを覆えていなかった。それでも `body.drawer-open #mode-nav { display: none }` は
+  **モバイルのメディアクエリの中にしか無かった**ので、デスクトップでは
+  aria-modal="true" を宣言しているそばからピルがクリックでき、Tab でも届いた。
+  押せば exitGallery() が走る ── ドロワーの焦点閉じ込めと真っ向から食い違う。
+*/
+body.drawer-open #mode-nav {
+  display: none;
 }
 
 /*
@@ -2740,10 +2790,6 @@ html {
     padding: 0.34rem 0.75rem;
   }
 
-  /* 全画面シートの解説とトップナビは同じ場所を取り合う。解説が優先 */
-  body.drawer-open #mode-nav {
-    display: none;
-  }
 
   /*
     計器の柱: ギャラリーではパネルがボトムシートになるため、展示カウンタも
