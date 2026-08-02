@@ -185,8 +185,18 @@ export class Tabs implements Component {
 
     event.preventDefault();
     const id = this.order[next];
+    /*
+      **手動アクティベーション**(Phase 14c)。矢印キーは焦点を移すだけで、
+      選択は Enter / Space(button の既定動作 = click)に委ねる。
+
+      それまでは矢印 1 回ごとに onSelect が走っていた ── 展示の入れ替えは
+      380ms のシーン再構築を伴うので、4 展示を矢印で通過するだけで
+      4 回の再構築が積み上がる(読み上げも 4 回)。WAI-ARIA が
+      「タブの切り替えが高コストなときは手動を採る」としているのは、まさにこの形。
+
+      **マウスとタッチの挙動は 1 ミリも変わらない**(click は従来どおり選択する)。
+    */
     this.tabs.get(id)?.focus({ preventScroll: true });
-    this.onSelect(id);
   };
 
   /** いまフォーカスがあるタブ。帯の外にフォーカスがあれば選択中を返す */

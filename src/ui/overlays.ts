@@ -258,6 +258,15 @@ interface OverlayOptions {
   readonly announcer?: Announcer;
 }
 
+/**
+ * ネイティブにフォーカスできる要素か(Phase 14c)。
+ * 章の飾り(.ch-hint / .ch-caption)まで tabindex を触らないための絞り込みで、
+ * 実際に該当するのは終章の CTA ボタンだけである。
+ */
+function isFocusable(el: HTMLElement): boolean {
+  return el instanceof HTMLButtonElement || el instanceof HTMLAnchorElement;
+}
+
 export class Overlays {
   private readonly director: ScrollDirector;
   private readonly dom: NarrativeDom;
@@ -516,6 +525,7 @@ export class Overlays {
     for (let k = 0; k < tail.length; k++) {
       tail[k].style.opacity = '';
       tail[k].style.pointerEvents = '';
+      if (isFocusable(tail[k])) tail[k].removeAttribute('tabindex');
       anims.push(
         play(tail[k], [{ opacity: 0, translate: '0 8px' }, { opacity: 1, translate: 'none' }], {
           duration: TAIL_MS,
@@ -581,11 +591,23 @@ export class Overlays {
     this.bodySplits[index]?.conceal();
     const head = this.dom.heads[index];
     for (let k = 0; k < head.length; k++) head[k].style.opacity = '0';
-    // 伏せている CTA が「見えないまま押せる」状態にならないよう当たり判定も切る
+    /*
+      伏せている CTA が「見えないまま押せる」状態にならないようにする。
+
+      Phase 14c まで、ここは opacity と pointer-events しか切っていなかった。
+      どちらも**タブ順からは外さない** ── そして opacity はアウトラインにも効くので、
+      .cta:focus-visible の枠線も見えない。結果として `#enter-gallery` は
+      「文書内で最初にフォーカスできる要素」でありながら、見えも読み上げられも
+      しないボタンだった(ロード直後の Tab 一回で着地し、Enter でギャラリーへ飛ぶ)。
+
+      tabIndex = -1 で経路そのものを閉じる。代わりの、ラベルのある入口は
+      index.html の #skip-gallery(:focus-visible でだけ現れる)が引き受ける。
+    */
     const tail = this.dom.tails[index];
     for (let k = 0; k < tail.length; k++) {
       tail[k].style.opacity = '0';
       tail[k].style.pointerEvents = 'none';
+      if (isFocusable(tail[k])) tail[k].tabIndex = -1;
     }
   }
 
@@ -604,6 +626,7 @@ export class Overlays {
     for (let k = 0; k < tail.length; k++) {
       tail[k].style.opacity = '';
       tail[k].style.pointerEvents = '';
+      if (isFocusable(tail[k])) tail[k].removeAttribute('tabindex');
     }
   }
 

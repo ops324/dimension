@@ -120,6 +120,15 @@ if (
 function mountChrome(): void {
   createCursor(document.body);
 
+  /*
+    スキップリンク(Phase 14c)。押したときの経路は終章の CTA と**完全に同じ** ──
+    同じ CustomEvent を投げるので、ギャラリーの遅延構築も遷移の幕も
+    (Phase 13 以降は)履歴への push も、すべて 1 本の道を共有する。
+  */
+  document.getElementById('skip-gallery')?.addEventListener('click', () => {
+    window.dispatchEvent(new CustomEvent('dimension:enter-gallery'));
+  });
+
   const cta = document.getElementById('enter-gallery');
   if (cta instanceof HTMLElement) magnetize(cta, { labelSelector: '.cta-label' });
 
@@ -142,6 +151,8 @@ function bootStandaloneExhibit(kind: ExhibitId): void {
   document.getElementById('progress')?.remove();
   document.getElementById('gallery')?.remove();
   document.getElementById('mode-nav')?.remove();
+  // 行き先そのものが無いので、スキップリンクも落とす
+  document.getElementById('skip-gallery')?.remove();
   document.body.style.overflow = 'hidden';
 
   const entry = EXHIBIT_REGISTRY.find((e) => e.id === kind);
