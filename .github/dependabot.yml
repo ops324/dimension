@@ -1,0 +1,23 @@
+# GitHub Actions のバージョン追随を自動化する。
+#
+# 動機は実際に起きた失敗にある ── 派生作 dimension-lens を立ち上げるとき、
+# この deploy.yml をそのまま複製した。そのとき 4 つのアクションはいずれも
+# 2〜3 メジャー遅れており(checkout v4 対 v7 など)、Node 20 廃止の警告が出るまで
+# 誰も気づかなかった。しかも一度は「上流の複合アクション内なので直せない」と
+# 誤って結論づけている。上流はとうに直っていて、遅れていたのはこちらだけだった。
+#
+# 人間(あるいはエージェント)の注意力に依存させない、というのがここでの判断である。
+#
+# npm は対象にしない。three は exact pin(0.185.1)が意図的な仕様で
+# (SPEC §12 罠#11: シェーダー文字列の置換アンカーがバージョンで壊れる)、
+# 自動 PR がそれと戦うことになるため。three の更新は人間が意図して行う。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: 'chore'
+    labels:
+      - ci

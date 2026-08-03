@@ -3,6 +3,11 @@ name: Deploy to GitHub Pages
 on:
   push:
     branches: [main]
+  # PR でも品質ゲート(vitest + build)を回す。これが無いと SPEC §11 の
+  # 「1 フェーズ = 1 PR、マージ前に vitest 全緑と build 成功」は**人間の記憶に
+  # 依存した約束**でしかなく、機械は何も見ていないことになる ──
+  # 実際、この PR 自身が最初は CI ゼロで上がってきた。
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -18,19 +23,22 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
-          node-version: 20
+          node-version-file: .nvmrc
           cache: npm
       - run: npm ci
       - run: npx vitest run
       - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v5
         with:
           path: dist
 
   deploy:
+    # **pull_request トリガを足したので、このガードは必須である。**
+    # 無いと PR のコードがそのまま本番へ出る(公開作品なので実害が出る)。
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:
@@ -38,4 +46,4 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@v5
