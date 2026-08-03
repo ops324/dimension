@@ -663,6 +663,9 @@ CSSが大きいのは @fontsource の日本語フォント定義(121のunicode-r
 - **1フェーズ = 1ブランチ = 1 PR**(PR #1〜#21)
 - **モデル分担**: 難所(数学コア・GPUシェーダー・スライス数学)と統合判断・全PRレビューは Fable、各フェーズ実装は Opus サブエージェント。**不具合修正時は独立監査サブエージェントを立て、実測に基づくプランを作ってから実装**
 - **品質ゲート**(全PR必須): `npx vitest run` 全緑 + `npm run build` 成功 + ブラウザ実機確認 + コンソールエラーゼロ
+  - PR #25 まで、前半 2 つは**人間の記憶に依存した約束**でしかなかった ── ワークフローの
+    トリガが `push: [main]` だけで、**PR には機械のゲートが一切かかっていなかった**。
+    `pull_request` を足して機械が見るようにした(§13)。後半 2 つは引き続き人間が見る
 
 ```bash
 npm install
@@ -737,15 +740,25 @@ DEVフック `window.__DIMENSION__` はブートパスによって形が異な�
 **GitHub Actions → GitHub Pages** で自動公開している(`.github/workflows/deploy.yml`)。
 
 ```
-push to main
+push to main / pull_request
   → npm ci
   → npx vitest run       # 失敗すれば公開されない(品質ゲート)
   → npm run build
   → actions/upload-pages-artifact(dist/)
-  → actions/deploy-pages
+  ────────────────────────────────────── ここまでは PR でも走る
+  → actions/deploy-pages                 # if: push && ref == main のときだけ
 ```
 
+- **`pull_request` トリガと deploy のガードはセットである**(PR #25)。トリガだけ足すと
+  PR のコードがそのまま本番へ出る。`if: github.event_name == 'push' && github.ref == 'refs/heads/main'`
 - Pages の公開元は API で `build_type=workflow` に設定済み(リポジトリ設定のブランチ指定ではなく Actions 経由)
+- Node は `.nvmrc`(24)に一本化。以前は `node-version: 20` の直書きで、
+  **ローカル(24)と CI が食い違っていた**うえ Node 20 は 2026-04 に EOL だった
+- **アクションの追随は `.github/dependabot.yml`** (月次・`github-actions` のみ)。
+  派生作 dimension-lens を立ち上げる際にこの `deploy.yml` を複製して初めて、
+  4 本とも 2〜3 メジャー遅れていたことが分かった(checkout v4 対 v7 など)。
+  失敗の型は「直せなかった」ではなく**「気づかなかった」**なので、仕組みで塞ぐ。
+  npm は対象外 ── three の exact pin は罠#11 に基づく意図的な仕様で、自動 PR がそれと戦う
 - `vite.config.ts` の `base: './'`(相対パス出力)により、`https://ops324.github.io/dimension/` のようなサブパス配信でも変更なしで動く。カスタムドメインに切り替えても同様
 - 手動再実行は `workflow_dispatch` でも可能
 
@@ -774,6 +787,8 @@ Phase 13〜14c の主張は水準の違う証拠に支えられている。**混
 | 読み上げの**聞こえ方** | **C** | **VoiceOver 未試行**。合流窓 220ms が体感として妥当か、見出しの `aria-label` + `.sr-only` 複製を読み上げが一度で済ませるかは**支援技術ごとに割れうる**ので、音でしか判断できない |
 | iOS Safari の端スワイプバック(§6.1) | **A** | **作者が実機で確認**。ギャラリーから左端スワイプで物語へ戻り、サイトを離脱しない |
 | DPR3 端末の品質ティア(§4.6) | **C** | シミュレータの GPU はホスト機のものなので代理にならない |
+| **品質ゲートが機械に見られている**(§11) | **A** | PR #25 で `pull_request` トリガを追加し、PR 上で `build: success` / `deploy: skipped` を実測。**それまでは C だった** ── 「全PR必須」と書いてあっても、機械は何も見ていなかった |
+| **CI が Node 24 と現行アクションで通る**(§13) | **A** | PR #25 でローカル(vitest 35/35・build 成功)と CI(build/deploy とも success・警告ゼロ)の両方で実測 |
 
 **実機確認で 2 つが C から上がった**(セーフエリアの入力値 / 端スワイプバック)。
 どちらも目で見て判別できる主張なので、作者の実機目視がそのまま証拠になる。
