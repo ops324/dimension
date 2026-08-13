@@ -207,7 +207,9 @@ export function buildNarrativeDOM(root: HTMLElement, chapters: readonly Chapter[
       rail.append(makeEl('span', 'ch-hint-dot'));
       const label = makeEl('span', 'ch-hint-label', chapter.hint);
       label.lang = 'en'; // "SCROLL"
-      hint.append(rail, label);
+      // ラベル → 帯の順(Phase 16)。帯は縦になったので、語のあとに下へ伸びる ──
+      // 読み順がそのまま「SCROLL、この向きへ」になる
+      hint.append(label, rail);
       inner.append(hint);
       tail.push(hint);
     }

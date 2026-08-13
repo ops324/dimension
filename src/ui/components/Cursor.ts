@@ -141,10 +141,16 @@ export class Cursor implements Component {
   };
 
   /** 状態決定。DOM 書き込みは値が変わったときだけ */
-  private evaluate(target: EventTarget | null, gallery: boolean): void {
+  private evaluate(target: EventTarget | null, _gallery: boolean): void {
     let next: CursorState = 'idle';
     if (target instanceof Element) {
-      if (gallery && target.id === 'gl') next = 'drag';
+      /*
+        キャンバスは**どちらのモードでも**掴める(Phase 16 で物語側にも見回しが
+        付いた)。モードで出し分けていた頃の名残で引数は残してあるが、
+        判定は「キャンバスの上か」だけ ── デスクトップではこのラベルが、
+        物語の図を回せることを知らせる唯一の合図になる。
+      */
+      if (target.id === 'gl') next = 'drag';
       else if (target.closest(HOVER_SELECTOR) !== null) next = 'hover';
     }
     if (next === this.state) return;

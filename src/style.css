@@ -122,9 +122,16 @@ body {
   z-index: 0;
 }
 
-/* 物語モードではキャンバスは操作対象ではない(OrbitControls は Phase 7 のギャラリーで復活) */
+/* 物語モードのキャンバスも掴める(Phase 16)。
+
+   `touch-action: pan-y` が要点 ── 縦のドラッグは**ブラウザが**スクロールとして
+   処理し(物語は縦に読むもので、その操作を奪ってはいけない)、横のドラッグだけが
+   pointermove として narrative.ts へ届く。none にすると物語がスクロールできなくなり、
+   auto にすると横に振っただけでページが揺れる。
+   マウスにはこの二択が無いので、デスクトップでは上下も見回しに使える。 */
 body.mode-narrative #gl {
-  pointer-events: none;
+  pointer-events: auto;
+  touch-action: pan-y;
 }
 
 /* ---------------------------------------------------------------- 進捗バー */
@@ -354,10 +361,18 @@ body.fonts-ready #narrative {
 
 /* --------------------------------------------------------- スクロール誘導 */
 
+/* 誘導は**スクロールと同じ向き**に流す(Phase 16)。
+
+   横に伸びる帯の上を光が左から右へ走っていたが、この画面で求めている動作は
+   縦のスクロールである。指の向きと誘導の向きが直交していると、
+   合図としては読めても身体は動かない ── 帯を縦に倒し、光は下へ落とす。
+   ラベルは水平のまま(読ませる文字を寝かせる理由はない)。 */
+
 .ch-hint {
   display: flex;
-  align-items: center;
-  gap: 0.9rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.7rem;
   margin: clamp(1.8rem, 5vh, 3.2rem) 0 0;
   font-family: var(--font-mono);
   font-size: 0.62rem;
@@ -368,27 +383,29 @@ body.fonts-ready #narrative {
 
 .ch-hint-rail {
   position: relative;
-  width: 3.4rem;
-  height: 1px;
+  width: 1px;
+  height: 3.4rem;
+  /* 縦組みのラベルと軸を揃える(letter-spacing のぶん左へ寄せない) */
+  margin-left: 0.1rem;
   background: rgba(232, 236, 251, 0.16);
   overflow: hidden;
 }
 
 .ch-hint-dot {
   position: absolute;
-  inset-block: -1px;
-  width: 1.1rem;
-  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
-  animation: hint-sweep 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  inset-inline: -1px;
+  height: 1.1rem;
+  background: linear-gradient(180deg, transparent, var(--cyan), transparent);
+  animation: hint-fall 2.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }
 
-@keyframes hint-sweep {
+@keyframes hint-fall {
   0% {
-    transform: translateX(-1.2rem);
+    transform: translateY(-1.2rem);
   }
   60%,
   100% {
-    transform: translateX(3.5rem);
+    transform: translateY(3.5rem);
   }
 }
 
