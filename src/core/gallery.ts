@@ -798,7 +798,8 @@ export class Gallery {
     const index = EXHIBIT_REGISTRY.findIndex((entry) => entry.id === id) + 1;
 
     this.header.apply({ index, total, en: info.en, jp: info.jp, tagline: info.tagline });
-    this.drawer.setContent(`${info.jp} / ${info.en}`, info.explanation);
+    // やさしい層(codex)+ 深い層(explanation)の二層(Phase 15)
+    this.drawer.setContent(`${info.jp} / ${info.en}`, info.codex, info.explanation);
     this.hud?.setExhibit(index, total);
     this.tabs.setActive(id);
     /*

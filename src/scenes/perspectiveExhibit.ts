@@ -562,7 +562,8 @@ export class PerspectiveExhibit implements Exhibit {
 
     panel.note(
       '観測者と対象は同じ次元にできない(m ≠ n)。' +
-        'm < n では断面と影、m > n では X線俯瞰だけが意味を持つ ── 残りは無効表示になる。',
+        '低い側から覗くなら断面と影、高い側から見下ろすなら X線俯瞰 ── ' +
+        '選べない組み合わせは灰色になる。',
     );
 
     sync();

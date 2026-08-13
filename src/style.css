@@ -1588,6 +1588,292 @@ body.mode-gallery #perspective-caption {
   line-height: 0;
 }
 
+/* ---------------------------------------------------- コーデックス(Phase 15)
+
+   解説を「ゲームの図鑑」の構成へ:
+   フック → 導入 → たとえ話カード → 観察 → クエスト → 図鑑データ → DEEP DIVE。
+
+   アクセント色は展示ごとに 1 色(gallery.ts が #gallery に data-exhibit を
+   打つので、継承だけで全部品へ届く)。彩度はパレットの 4 色から借り、
+   新しい色は 1 色も発明しない ── 作品の色は作品のもの。
+*/
+
+#gallery {
+  --dw-accent: var(--cyan);
+  --dw-accent-line: rgba(79, 216, 255, 0.42);
+  --dw-accent-soft: rgba(79, 216, 255, 0.07);
+}
+
+#gallery[data-exhibit='clifford'] {
+  --dw-accent: var(--magenta);
+  --dw-accent-line: rgba(255, 79, 216, 0.42);
+  --dw-accent-soft: rgba(255, 79, 216, 0.07);
+}
+
+#gallery[data-exhibit='polytope'] {
+  --dw-accent: var(--gold);
+  --dw-accent-line: rgba(255, 210, 79, 0.42);
+  --dw-accent-soft: rgba(255, 210, 79, 0.07);
+}
+
+#gallery[data-exhibit='perspective'] {
+  --dw-accent: var(--violet);
+  --dw-accent-line: rgba(157, 107, 255, 0.45);
+  --dw-accent-soft: rgba(157, 107, 255, 0.08);
+}
+
+/* フック ── ドロワーを開いた人が最初に読む一行。ここだけ声が大きい */
+.dw-body .dw-hook {
+  margin: 0.2rem 0 1.1rem;
+  padding-left: 0.9rem;
+  border-left: 2px solid var(--dw-accent);
+  font-size: 0.98rem;
+  font-weight: 600;
+  line-height: 2;
+  letter-spacing: 0.04em;
+  color: #eafbff;
+  text-shadow: 0 0 18px var(--dw-accent-soft);
+}
+
+.dw-body .dw-intro {
+  margin-bottom: 1.7rem;
+}
+
+/* セクションラベル ── 「EN / 日本語」+ 右へ掃けるヘアライン */
+.dw-label {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+  margin: 0 0 0.75rem;
+}
+
+.dw-label-en {
+  font-family: var(--font-mono);
+  font-size: 0.56rem;
+  letter-spacing: 0.3em;
+  color: var(--dw-accent);
+}
+
+.dw-label-jp {
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+}
+
+.dw-label::after {
+  content: '';
+  flex: 1;
+  height: 1px;
+  transform: translateY(-0.2em);
+  background: linear-gradient(90deg, var(--hairline-strong), transparent);
+}
+
+/* たとえ話カード ── 四隅のうち対角 2 つにだけブラケットを打つ(計器の意匠) */
+.dw-card {
+  position: relative;
+  margin: 0 0 1.7rem;
+  padding: 1rem 1.1rem 1.05rem;
+  border: 1px solid var(--hairline);
+  background: linear-gradient(160deg, var(--dw-accent-soft), rgba(10, 12, 24, 0.3) 55%);
+}
+
+.dw-card::before,
+.dw-card::after {
+  content: '';
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  pointer-events: none;
+}
+
+.dw-card::before {
+  top: -1px;
+  left: -1px;
+  border-top: 1px solid var(--dw-accent);
+  border-left: 1px solid var(--dw-accent);
+}
+
+.dw-card::after {
+  right: -1px;
+  bottom: -1px;
+  border-right: 1px solid var(--dw-accent);
+  border-bottom: 1px solid var(--dw-accent);
+}
+
+.dw-body .dw-card-title {
+  margin: 0 0 0.45rem;
+  font-size: 0.88rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink);
+}
+
+.dw-body .dw-card-body {
+  margin: 0;
+  font-size: 0.76rem;
+  line-height: 2.05;
+}
+
+/* 観察ポイント ── ◆ を展示色で打つ */
+.dw-observe,
+.dw-quests,
+.dw-stats {
+  margin: 0 0 1.7rem;
+}
+
+.dw-observe-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.dw-observe-list li {
+  position: relative;
+  margin: 0 0 0.65rem;
+  padding-left: 1.15rem;
+  font-size: 0.76rem;
+  line-height: 1.95;
+  letter-spacing: 0.035em;
+  color: var(--ink-body);
+}
+
+.dw-observe-list li::before {
+  content: '◆';
+  position: absolute;
+  left: 0;
+  top: 0;
+  font-size: 0.55em;
+  line-height: 3.4;
+  color: var(--dw-accent);
+}
+
+/* クエスト ── 番号付きの誘い。触れると展示色の縁が灯る */
+.dw-quest {
+  display: flex;
+  gap: 0.8rem;
+  margin: 0 0 0.55rem;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid var(--hairline);
+  background: rgba(10, 12, 24, 0.42);
+  transition: border-color var(--t-fast) ease, background-color var(--t-fast) ease;
+}
+
+.dw-quest:hover {
+  border-color: var(--dw-accent-line);
+  background: var(--dw-accent-soft);
+}
+
+.dw-quest-num {
+  flex: 0 0 auto;
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  line-height: 2.1;
+  letter-spacing: 0.12em;
+  color: var(--dw-accent);
+}
+
+.dw-quest-text {
+  min-width: 0;
+}
+
+.dw-body .dw-quest-title {
+  margin: 0 0 0.25rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 1.8;
+  letter-spacing: 0.05em;
+  color: var(--ink);
+}
+
+.dw-body .dw-quest-body {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.9;
+  color: var(--ink-dim);
+}
+
+/* 図鑑データ ── 1px のヘアラインで割った 2 列(gap をそのまま罫線にする) */
+.dw-stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin: 0;
+  border: 1px solid var(--hairline);
+  background: var(--hairline);
+}
+
+.dw-stat {
+  padding: 0.65rem 0.8rem;
+  background: rgba(6, 8, 18, 0.82);
+}
+
+.dw-stat-label {
+  font-family: var(--font-mono);
+  font-size: 0.54rem;
+  letter-spacing: 0.24em;
+  color: var(--dw-accent);
+}
+
+.dw-stat-value {
+  margin: 0.3rem 0 0;
+  font-size: 0.72rem;
+  line-height: 1.75;
+  letter-spacing: 0.03em;
+  color: var(--ink);
+}
+
+/* DEEP DIVE ── 潜りたい人だけの階段。従来の科学解説がここに沈んでいる */
+.dw-deep {
+  border-top: 1px solid var(--hairline-strong);
+}
+
+.dw-deep-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  padding: 0.95rem 0.15rem;
+  cursor: pointer;
+  list-style: none;
+  transition: color var(--t-fast) ease;
+}
+
+.dw-deep-summary::-webkit-details-marker {
+  display: none;
+}
+
+.dw-deep-en {
+  font-family: var(--font-mono);
+  font-size: 0.58rem;
+  letter-spacing: 0.3em;
+  color: var(--dw-accent);
+}
+
+.dw-deep-jp {
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+
+.dw-deep-glyph {
+  margin-left: auto;
+  font-size: 0.62rem;
+  color: var(--ink-dim);
+  transition: transform var(--t-med) var(--ease-out-quint), color var(--t-fast) ease;
+}
+
+.dw-deep-summary:hover .dw-deep-jp {
+  color: #eafbff;
+}
+
+.dw-deep[open] .dw-deep-glyph {
+  transform: rotate(45deg);
+  color: var(--dw-accent);
+}
+
+.dw-deep-body {
+  padding: 0.35rem 0 0.2rem;
+}
+
 /* ------------------------------------------------------ スキップリンク
 
    Phase 14c。**視覚コストはゼロ** ── :focus-visible でしか現れないので、
@@ -3091,6 +3377,9 @@ html {
   .gh-about,
   .gh-about::before,
   .dw-close,
+  .dw-quest,
+  .dw-deep-glyph,
+  .dw-deep-summary,
   #quality,
   .q-chip,
   .q-opt,
