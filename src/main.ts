@@ -25,6 +25,7 @@ import { CHAPTERS, CHAPTER_DIMS } from './ui/content';
 import { Overlays, buildNarrativeDOM } from './ui/overlays';
 import { Preloader } from './ui/components/Preloader';
 import { createCursor } from './ui/components/Cursor';
+import { createLensDriver } from './ui/lens';
 import { magnetize } from './ui/components/MagneticButton';
 import { createSoundToggle } from './ui/components/SoundToggle';
 import { createAnnouncer } from './ui/components/Announcer';
@@ -119,6 +120,9 @@ if (
  */
 function mountChrome(): void {
   createCursor(document.body);
+  // カーソルの下で時空が歪む(Phase 17)。ゲートは createCursor と同一で、
+  // 作られない環境ではシェーダー側のレンズ節ごと眠ったままになる
+  createLensDriver(engine);
 
   /*
     スキップリンク(Phase 14c)。押したときの経路は終章の CTA と**完全に同じ** ──
@@ -233,6 +237,9 @@ function bootStandaloneExhibit(kind: ExhibitId): void {
       quality,
       /** GradePass の on/off(グレイン・ビネット・ディザの before/after 比較用) */
       grade: (on: boolean): void => engine.postfx.setGradeEnabled(on),
+      /** 重力レンズを直接置く(UV・左下原点)。ヘッドレス検証用 ── rAF が止まって
+       *  いてもドライバを介さず uniform を書ける。renderOnce と組で使う */
+      lens: (x: number, y: number, amount: number): void => engine.postfx.setLens(x, y, amount),
       renderOnce,
       audio: devAudioHooks(wiring),
     };
@@ -386,6 +393,9 @@ function bootNarrative(): void {
       quality,
       /** GradePass の on/off(グレイン・ビネット・ディザの before/after 比較用) */
       grade: (on: boolean): void => engine.postfx.setGradeEnabled(on),
+      /** 重力レンズを直接置く(UV・左下原点)。ヘッドレス検証用 ── rAF が止まって
+       *  いてもドライバを介さず uniform を書ける。renderOnce と組で使う */
+      lens: (x: number, y: number, amount: number): void => engine.postfx.setLens(x, y, amount),
       /** 初回入場までは null(遅延生成) */
       get gallery(): Gallery | null {
         return gallery;

@@ -4,8 +4,14 @@
     {
       "name": "dimension-dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev", "--", "--host"],
-      "port": 5173
+      "runtimeArgs": [
+        "run",
+        "dev",
+        "--",
+        "--host"
+      ],
+      "port": 5173,
+      "autoPort": true
     }
   ]
 }
