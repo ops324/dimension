@@ -36,6 +36,12 @@ export interface PostFX {
   setBloomRadius(radius: number): void;
   /** GradePass の有効/無効。DEV の before/after 比較用 */
   setGradeEnabled(on: boolean): void;
+  /**
+   * 重力レンズ(Phase 17)。cx/cy は UV(左下原点 0..1)、amount は 0..1。
+   * amount = 0 でシェーダーは完全に恒等(uniform 分岐で計算ごとスキップ)。
+   * 書き手は lens ドライバ(src/ui/lens.ts)ただ 1 つ。
+   */
+  setLens(cx: number, cy: number, amount: number): void;
 }
 
 const DEFAULT_SAMPLES = 4;
@@ -78,6 +84,27 @@ const GRADE_VIGNETTE = 0.18;
 const GRADE_GRAIN = 0.015;
 const GRADE_ABERRATION = 0.4;
 
+/**
+ * 重力レンズの調律(Phase 17、ブラウザ実測で決定)。距離は**短辺基準の UV**
+ * (min(width,height) を 1 とする単位)で測る ── 画面アスペクトに依らず円になる。
+ *
+ *   SIGMA: ガウス裾の σ。見かけの影響圏はおよそ 2σ(短辺の ~18%)
+ *   PULL:  中心へ引き込む倍率。変位は (uv−c)·amount·g·PULL で、
+ *          ピーク変位は r=σ の位置で σ·e^{−1/2}·PULL ≒ 短辺の 3%。
+ *          係数が r に比例するので**中心に特異点がない**(1/r 型レンズは
+ *          カーソル直下で発散し、1 テクセルの色が円盤に引き伸ばされる)
+ *   TWIST: 中心での回転角(rad)。慣性系の引きずりの引用。符号は CCW
+ *   DISP:  R/B の PULL 差(±)。リムでだけ虹の縁が出る ── 全画面の色収差
+ *          (uStrength.z)とは独立で、レンズの縁にのみ現れる
+ *
+ * これらはシェーダー内 const へ**焼き込む**(毎フレーム変える理由がなく、
+ * uniform を増やすとドライバ側に「調律したくなる口」が生えるため)。
+ */
+const LENS_SIGMA = 0.09;
+const LENS_PULL = 0.55;
+const LENS_TWIST = 0.25;
+const LENS_DISP = 0.12;
+
 const GRADE_VERTEX_SHADER = /* glsl */ `
 varying vec2 vUv;
 
@@ -98,6 +125,8 @@ uniform sampler2D tDiffuse;
 uniform float uTime;
 uniform vec2 uResolution;
 uniform vec3 uStrength;
+// (中心UV.x, 中心UV.y, 強さ 0..1)。強さ 0 でレンズ節は丸ごとスキップされる
+uniform vec3 uLens;
 
 varying vec2 vUv;
 
@@ -110,16 +139,44 @@ float hash12(vec2 p) {
   return fract((p3.x + p3.y) * p3.z);
 }
 
+// 調律値は postfx.ts の LENS_* 定数から焼き込まれる(JS 側コメント参照)
+const float LENS_SIGMA = ${LENS_SIGMA.toFixed(4)};
+const float LENS_PULL = ${LENS_PULL.toFixed(4)};
+const float LENS_TWIST = ${LENS_TWIST.toFixed(4)};
+const float LENS_DISP = ${LENS_DISP.toFixed(4)};
+
 void main() {
   vec2 d = vUv - 0.5;
   float r2 = dot(d, d);
 
+  // ⓪ 重力レンズ: **サンプル座標**を歪める(ビネット/グレインは画面に固定のまま)。
+  //    短辺基準の座標系 q で測るのでレンズは常に真円。変位は (uv−c) に比例するため
+  //    中心に特異点がなく、中心ほど拡大される「質量のあるガラス」として読める。
+  //    条件は uniform のみの分岐なので、レンズ不在(タッチ端末・reduced-motion)では
+  //    ワープ全体でこの節が実行されない。
+  vec2 uvR = vUv;
+  vec2 uvG = vUv;
+  vec2 uvB = vUv;
+  if (uLens.z > 0.001) {
+    vec2 asp = uResolution / min(uResolution.x, uResolution.y);
+    vec2 q = (vUv - uLens.xy) * asp;
+    float g = uLens.z * exp(-dot(q, q) / (2.0 * LENS_SIGMA * LENS_SIGMA));
+    float a = g * LENS_TWIST;
+    float cs = cos(a);
+    float sn = sin(a);
+    vec2 rq = mat2(cs, sn, -sn, cs) * q;
+    float pull = g * LENS_PULL;
+    uvR = uLens.xy + rq * (1.0 - pull * (1.0 - LENS_DISP)) / asp;
+    uvG = uLens.xy + rq * (1.0 - pull) / asp;
+    uvB = uLens.xy + rq * (1.0 - pull * (1.0 + LENS_DISP)) / asp;
+  }
+
   // ① 色収差: 中心からの放射方向へ RGB をずらす。量は r² 比例(隅で uStrength.z px)
   vec2 shift = d * inversesqrt(max(r2, 1e-6)) * (uStrength.z * r2 * 2.0) / uResolution;
   vec3 color = vec3(
-    texture2D(tDiffuse, vUv + shift).r,
-    texture2D(tDiffuse, vUv).g,
-    texture2D(tDiffuse, vUv - shift).b
+    texture2D(tDiffuse, uvR + shift).r,
+    texture2D(tDiffuse, uvG).g,
+    texture2D(tDiffuse, uvB - shift).b
   );
 
   // ② ビネット: 中心 55% はフラット、そこから隅へなだらかに落とす
@@ -200,6 +257,7 @@ export function buildPostFX(
       uTime: { value: 0 },
       uResolution: { value: new THREE.Vector2(1, 1) },
       uStrength: { value: new THREE.Vector3(GRADE_VIGNETTE, GRADE_GRAIN, GRADE_ABERRATION) },
+      uLens: { value: new THREE.Vector3(0.5, 0.5, 0) },
     },
     vertexShader: GRADE_VERTEX_SHADER,
     fragmentShader: GRADE_FRAGMENT_SHADER,
@@ -208,6 +266,7 @@ export function buildPostFX(
   const gradeTime = gradePass.uniforms.uTime as THREE.IUniform<number>;
   const gradeResolution = gradePass.uniforms.uResolution.value as THREE.Vector2;
   const gradeStrength = gradePass.uniforms.uStrength.value as THREE.Vector3;
+  const gradeLens = gradePass.uniforms.uLens.value as THREE.Vector3;
 
   composer.addPass(renderPass);
   composer.addPass(bloomPass);
@@ -294,6 +353,10 @@ export function buildPostFX(
     },
     setGradeEnabled(on: boolean): void {
       gradePass.enabled = on;
+    },
+    setLens(cx: number, cy: number, amount: number): void {
+      // NaN は 0 側へ倒す(min/max の NaN 伝播は引数順に依存するため三項で書く)
+      gradeLens.set(cx, cy, amount > 0 ? (amount < 1 ? amount : 1) : 0);
     },
   };
 }

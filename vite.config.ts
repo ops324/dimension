@@ -3,6 +3,11 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   // 相対パス出力: Netlify/Vercel/GitHub Pages などサブパス配信でもそのまま動く
   base: './',
+  // 並行セッション対応: ランチャーが PORT を割り当てたらそれに従う(未指定なら既定の 5173)。
+  // Vite は PORT 環境変数を自分では読まないので、ここで明示的に橋渡しする。
+  server: {
+    port: Number(process.env.PORT) || 5173,
+  },
   build: {
     target: 'es2022',
     /**
