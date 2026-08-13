@@ -81,6 +81,35 @@ export function h<K extends keyof HTMLElementTagNameMap>(
   return node;
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * SVG 版の DOM ビルダ(Phase 18)。h() は createElement なので SVG 名前空間の
+ * 要素を作れず、作っても図形として描画されない ── 名前空間つきの兄弟が要る。
+ *
+ * **className に代入してはいけない**: SVGElement.className は HTMLElement の
+ * それと違って読み取り専用の SVGAnimatedString なので、代入は例外も出さずに
+ * 黙って無視される(クラスの付かない要素ができ、CSS が一切効かない)。
+ * ここで setAttribute に一本化しておけば、呼び出し側はその差を知らずに済む。
+ *
+ * h() と同じく innerHTML は使わない。`text` の特別扱いも持たない
+ * ── SVG で文字を置く用は今のところ無く、要るまで作らない。
+ */
+export function s<K extends keyof SVGElementTagNameMap>(
+  tag: K,
+  className?: string,
+  attrs?: Record<string, string>,
+): SVGElementTagNameMap[K] {
+  const node = document.createElementNS(SVG_NS, tag);
+  if (className !== undefined) node.setAttribute('class', className);
+  if (attrs !== undefined) {
+    for (const key in attrs) {
+      node.setAttribute(key, attrs[key]);
+    }
+  }
+  return node;
+}
+
 /* ------------------------------------------------- prefers-reduced-motion */
 
 const motionQuery: MediaQueryList | null =
