@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
-import { clamp01, expSmooth, smoothstep } from '../math/ease';
+import { clamp, clamp01, expSmooth, smoothstep } from '../math/ease';
 import { makeNCube, type Polytope } from '../math/polytopes';
 import { rotateBatch, type PlaneRotation } from '../math/rotation';
 import { projectPerspective } from '../math/projection';
@@ -212,6 +212,35 @@ const DRIFT_X = 0.08;
 const DRIFT_Y = 0.06;
 const DRIFT_Z = 0.05;
 
+/* --------------------------------------------------- 見回し(Phase 16)
+
+   物語の構図は章ごとに決め打ちだが、**その周りを見回す自由**は読者に渡す。
+   カメラ位置を上書きするのではなく、章のキーフレームが決めた位置を
+   原点まわりに回すだけ ── 距離も画角もアイドルドリフトも章のまま残るので、
+   どこから見ても「その章の絵」であることは壊れない。
+*/
+
+/** 画面幅いっぱいのドラッグで回る方位角(rad)。約 1.4 周ぶん。
+    水平は**一周させる** ── 図形を裏から見るのは物語の邪魔にならない */
+const LOOK_YAW_PER_PX = (Math.PI * 2.8) / 1000;
+/** 同・仰角。方位より鈍い(縦は構図が崩れやすい) */
+const LOOK_PITCH_PER_PX = (Math.PI * 0.45) / 1000;
+/**
+ * 仰角の可動域(rad、章の高さからの**相対**)。約 ±31°。
+ *
+ * 絶対角ではなく相対で縛るのが肝 ── 章ごとにカメラの高さは違うのに、
+ * 絶対の可動域を配ると「ある章では上から覗けて、ある章では覗けない」になる。
+ * 真上まで開放しないのは、それが自由だからではなく**構図の放棄**だから:
+ * 章の絵はその高さで組まれていて、真俯瞰では別の作品になってしまう。
+ */
+const LOOK_PITCH_LIMIT = 0.55;
+/** 極角の安全域(rad)。相対の縛りを抜けても、ここだけは絶対に越えない ──
+    真上・真下では lookAt の up と縮退して絵が一瞬ひっくり返る */
+const LOOK_POLAR_MIN = 0.22;
+const LOOK_POLAR_MAX = Math.PI - 0.22;
+/** ドラッグへの追従レート。高めにして 1:1 に近づけつつ、角を丸める */
+const LOOK_RATE = 14;
+
 /** 深度(投影後 z、正規化済み ∈[-1,1])→ LUT の行インデックス */
 function lutIndexOf(depth: number, scale: number): number {
   const t = (depth * scale + 1) * 0.5 * LUT_MAX;
@@ -258,6 +287,19 @@ export class NarrativeScene implements Exhibit {
 
   /** engine のカメラ。物語モードでは OrbitControls を使わずここから直接駆動する */
   private camera: THREE.PerspectiveCamera | null = null;
+
+  // --- 見回し(Phase 16)-------------------------------------------------------
+  /** ドラッグの積算(目標)と、実際に構図へ効いている値 */
+  private yawTarget = 0;
+  private pitchTarget = 0;
+  private yaw = 0;
+  private pitch = 0;
+  /** 追跡中のポインタ。-1 は「掴んでいない」 */
+  private dragId = -1;
+  private dragX = 0;
+  private dragY = 0;
+  /** リスナを外せるように、canvas は init で受け取って持っておく */
+  private canvas: HTMLCanvasElement | null = null;
 
   private lineBrightness = LINE_BASE_BRIGHTNESS;
   /** 縦長ドリー倍率。resize でだけ更新し、カメラリグと線幅の両方がこれを読む */
@@ -331,6 +373,12 @@ export class NarrativeScene implements Exhibit {
     // 起動時の 1 回(縦持ちで開かれたらこの時点で既に細い線で立ち上がる)
     this.syncDolly(ctx.engine.portraitDolly);
 
+    this.canvas = ctx.engine.renderer.domElement;
+    this.canvas.addEventListener('pointerdown', this.onPointerDown);
+    this.canvas.addEventListener('pointermove', this.onPointerMove);
+    this.canvas.addEventListener('pointerup', this.onPointerEnd);
+    this.canvas.addEventListener('pointercancel', this.onPointerEnd);
+
     // reduced-motion ではカメラのアイドルドリフトを止める(スクロール駆動の
     // モーフ自体は物語の本体なので残す — 止めると内容が読めなくなるため)
     const query = window.matchMedia?.('(prefers-reduced-motion: reduce)');
@@ -362,6 +410,61 @@ export class NarrativeScene implements Exhibit {
   buildPanel(_root: HTMLElement): void {
     // no-op
   }
+
+  // --- 見回し(Phase 16)-------------------------------------------------------
+
+  /**
+   * キャンバスのドラッグで章の構図の**まわりを回る**。
+   *
+   * ギャラリーの OrbitControls は使わない ── あちらは距離も注視点も奪うので、
+   * 章ごとに設計されたカメラリグと真正面からぶつかる。ここでするのは
+   * 「章が決めた位置を原点まわりに回す」ことだけで、寄り・画角・ドリフトは章のまま。
+   *
+   * **ギャラリー中は黙る。** 同じ canvas に OrbitControls が付いているので、
+   * 両方が効くと 1 回のドラッグが二重に解釈される。モードは body のクラスが
+   * 唯一の真実(ポインタを置いた瞬間の 1 回だけ読む ── 毎フレームではない)。
+   */
+  private readonly onPointerDown = (event: PointerEvent): void => {
+    if (document.body.classList.contains('mode-gallery')) return;
+    if (!event.isPrimary || event.button > 0) return;
+    this.dragId = event.pointerId;
+    this.dragX = event.clientX;
+    this.dragY = event.clientY;
+    // 掴んだ指がキャンバスの外へ出ても追い続ける。**タッチでは取らない** ──
+    // 捕捉するとブラウザが縦スクロールへ切り替える判断を奪ってしまう
+    if (event.pointerType !== 'touch') this.canvas?.setPointerCapture(event.pointerId);
+  };
+
+  private readonly onPointerMove = (event: PointerEvent): void => {
+    if (this.dragId !== event.pointerId) return;
+    const dx = event.clientX - this.dragX;
+    const dy = event.clientY - this.dragY;
+    this.dragX = event.clientX;
+    this.dragY = event.clientY;
+
+    this.yawTarget -= dx * LOOK_YAW_PER_PX;
+    /*
+      **タッチでは縦を取らない。** 縦のドラッグは物語そのもの(スクロール)であり、
+      canvas の touch-action: pan-y がそれをブラウザへ渡している。ここで仰角に
+      使うと、指が縦へ動くたび構図が傾きながらページも流れる ── どちらの操作にも
+      ならない。横だけ受けるので、指の左右で見回し、上下で読み進める。
+    */
+    if (event.pointerType !== 'touch') {
+      this.pitchTarget = clamp(
+        this.pitchTarget + dy * LOOK_PITCH_PER_PX,
+        -LOOK_PITCH_LIMIT,
+        LOOK_PITCH_LIMIT,
+      );
+    }
+  };
+
+  private readonly onPointerEnd = (event: PointerEvent): void => {
+    if (this.dragId !== event.pointerId) return;
+    this.dragId = -1;
+    if (this.canvas?.hasPointerCapture(event.pointerId) === true) {
+      this.canvas.releasePointerCapture(event.pointerId);
+    }
+  };
 
   /** 現在の次元レベル(デバッグ/検証用) */
   get dimLevel(): number {
@@ -406,13 +509,20 @@ export class NarrativeScene implements Exhibit {
     this.pointBatch.setBrightness(POINT_BASE_BRIGHTNESS * overlap * birth);
 
     // 6) カメラリグ
-    this.updateCamera(t);
+    this.updateCamera(t, dt);
   }
 
   dispose(): void {
     this.lineBatch?.dispose();
     this.pointBatch?.dispose();
     this.material?.dispose();
+    const canvas = this.canvas;
+    if (canvas !== null) {
+      canvas.removeEventListener('pointerdown', this.onPointerDown);
+      canvas.removeEventListener('pointermove', this.onPointerMove);
+      canvas.removeEventListener('pointerup', this.onPointerEnd);
+      canvas.removeEventListener('pointercancel', this.onPointerEnd);
+    }
   }
 
   // --- 内部 ------------------------------------------------------------------
@@ -631,11 +741,11 @@ export class NarrativeScene implements Exhibit {
 
   /**
    * カメラリグ。章 i のキーフレームへ、章の前半 50% で滑らかに寄せる。
-   * 常に原点を見る + わずかなアイドルドリフト。
+   * 常に原点を見る + わずかなアイドルドリフト + 読者の見回し(Phase 16)。
    * Vector3 の新規生成はしない(camera.position.set / lookAt(x,y,z) は
    * three 内部の静的テンポラリを使うのでアロケーションゼロ)。
    */
-  private updateCamera(t: number): void {
+  private updateCamera(t: number, dt: number): void {
     const camera = this.camera;
     if (camera === null) return;
 
@@ -656,6 +766,43 @@ export class NarrativeScene implements Exhibit {
       x += Math.sin(t * 0.3) * DRIFT_X;
       y += Math.cos(t * 0.23) * DRIFT_Y;
       z += Math.sin(t * 0.17) * DRIFT_Z;
+    }
+
+    /*
+      見回しの適用(Phase 16)。章が決めた位置を**球座標へ開いて角度だけ足し**、
+      また閉じる。半径をそのまま持ち回るので、寄り具合は章のまま 1mm も動かない。
+
+      極角は 0.22rad の余白を残してクランプする ── 真上・真下へ抜けると
+      lookAt の up ベクトルと縮退して絵が一瞬ひっくり返る。
+      trig は 1 フレーム 6 回。アロケーションはゼロ。
+    */
+    this.yaw = expSmooth(this.yaw, this.yawTarget, LOOK_RATE, dt);
+    this.pitch = expSmooth(this.pitch, this.pitchTarget, LOOK_RATE, dt);
+
+    if (this.yaw !== 0 || this.pitch !== 0) {
+      const radius = Math.sqrt(x * x + y * y + z * z);
+      if (radius > 1e-6) {
+        const azimuth = Math.atan2(x, z) + this.yaw;
+        const base = Math.acos(clamp(y / radius, -1, 1));
+        const wanted = base + this.pitch;
+        const polar = clamp(wanted, LOOK_POLAR_MIN, LOOK_POLAR_MAX);
+        if (polar !== wanted) {
+          /*
+            ここへ来るのは、章のカメラ自体が高い(または低い)ところに居て、
+            相対 ±0.55rad の範囲が絶対の安全域を突き抜けた場合だけ。
+            はみ出したぶんは**溜めずに捨てる** ── 溜めると、上限で擦り続けたあと
+            逆へ引いたときに何も起きない時間が生まれる(巻き戻しの空振り)。
+          */
+          const overflow = polar - wanted;
+          this.pitch += overflow;
+          this.pitchTarget += overflow;
+        }
+
+        const sinPolar = Math.sin(polar);
+        x = radius * sinPolar * Math.sin(azimuth);
+        y = radius * Math.cos(polar);
+        z = radius * sinPolar * Math.cos(azimuth);
+      }
     }
 
     camera.position.set(x, y, z);
