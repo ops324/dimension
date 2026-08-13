@@ -2803,9 +2803,15 @@ body.ui-hidden #perspective-inset {
 
 /* ------------------------------------------------------------- Cursor
 
-   3 要素は body 直下の兄弟。共通の親に z-index を与えると
+   2 要素は body 直下の兄弟。共通の親に z-index を与えると
    スタッキングコンテキストが分離して実点の difference が背景を見なくなる。
    JS が書くのは translate だけで、大きさの状態遷移は CSS が持つ。
+
+   Phase 18: 環は div + border ではなく **SVG**。border に scale を掛けると
+   線ごと拡大され、drag(×2.2)のとき 2.2px に太っていた ── この作品が
+   トークンで守っている 1px のヘアラインが、環が最も大きく見える瞬間にだけ
+   破れていた。non-scaling-stroke で全倍率 1px に固定する。
+   同じ一手で、環が 2 本の弧へ割れて回ることも書けるようになった。
 */
 
 .dc {
@@ -2829,7 +2835,6 @@ body.ui-hidden #perspective-inset {
 }
 
 .dc-ring,
-.dc-label,
 .dc-dot {
   position: fixed;
   left: 0;
@@ -2837,22 +2842,11 @@ body.ui-hidden #perspective-inset {
   z-index: var(--z-cursor);
   pointer-events: none;
   opacity: 0;
-  will-change: transform;
+  /* 毎フレーム書かれるのは独立プロパティの translate(transform ではない) */
+  will-change: translate;
 }
 
-.dc-ring {
-  width: 32px;
-  height: 32px;
-  margin: -16px 0 0 -16px;
-  border: 1px solid var(--hairline-strong);
-  border-radius: 50%;
-  scale: calc(var(--dc-ring) * var(--dc-press));
-  transition:
-    scale var(--t-fast) var(--ease-out-quint),
-    opacity var(--t-fast) linear,
-    border-color var(--t-fast) linear;
-}
-
+/* 実点。遅れなしで、difference で背景を反転して抜く */
 .dc-dot {
   width: 5px;
   height: 5px;
@@ -2866,28 +2860,133 @@ body.ui-hidden #perspective-inset {
     opacity var(--t-fast) linear;
 }
 
-.dc-label {
-  transform: translate(-50%, -50%);
-  font-family: var(--font-mono);
-  font-size: 9px;
-  letter-spacing: 0.18em;
-  line-height: 1;
-  white-space: nowrap;
-  color: var(--cyan);
-  transition: opacity var(--t-fast) linear;
+/* viewBox は原点中心なので、SVG の transform-origin 既定値 0 0 が環の中心。
+   色は currentColor 経由で配る ── 外環と内環の色が 1 本の宣言で同期する */
+.dc-ring {
+  width: 80px;
+  height: 80px;
+  margin: -40px 0 0 -40px;
+  color: var(--hairline-strong);
+  transition:
+    opacity var(--t-fast) linear,
+    color var(--t-fast) linear;
+}
+
+.dc-arc,
+.dc-arc-in {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1;
+  /* 拡大しても線は 1px のまま。この 1 語が上のコメントの欠陥を潰している */
+  vector-effect: non-scaling-stroke;
+  /* 弧の端が丸い ── border では表現できない質 */
+  stroke-linecap: round;
+  /*
+    pathLength=100 なので dasharray は「全周の %」。素の環は 49.6+0.4 の 2 組で、
+    0.4 の見えない継ぎ目を最初から入れておく ── ここを 0 にすると、割れる側
+    (42 8)との補間の途中で線端の丸めが潰れて弧がちらつく。
+  */
+  stroke-dasharray: 49.6 0.4;
+  /* 退出は静かに、表情を持たせない(ExhibitHeader の作法) */
+  transition: stroke-dasharray var(--t-fast) linear;
+}
+
+/* 内側の弧。外側と同一周期・逆向き = 等傾回転の定義そのもの。
+   drag のときだけ点り、それ以外では存在しない。
+
+   色は外環と同じ currentColor を継ぐ ── 独自に --hairline(白 0.08)を
+   持たせると、drag 時の実効アルファが 0.08×0.7 ≒ 0.056 まで落ちて、
+   ファイバーの束の上では完全に見えなくなる(実測)。階層は色ではなく
+   opacity だけでつける = 「器は光らない、指標が動く」の作法。 */
+.dc-arc-in {
+  stroke: currentColor;
+  opacity: 0;
+  transition:
+    stroke-dasharray var(--t-fast) linear,
+    opacity var(--t-fast) linear;
+}
+
+.dc-ring-g {
+  scale: calc(var(--dc-ring) * var(--dc-press));
+  transition: scale var(--t-fast) linear;
+}
+
+/* 入場は劇的に、退出は静かに ── 遷移先の規則が持つ transition が効く性質を
+   使って、JS を 1 行も増やさずに非対称にする。
+   ただし押下(--dc-press)は即応性が命なので、こちらは両方向とも fast のまま */
+.dc[data-state='hover'] .dc-ring-g,
+.dc[data-state='drag'] .dc-ring-g {
+  transition: scale var(--t-med) var(--ease-out-quint);
+}
+
+.dc[data-state='drag'] .dc-arc,
+.dc[data-state='drag'] .dc-arc-in {
+  /* 151.2° の弧 2 本 + 28.8° の隙間 2 つ。この隙間の動きで速さが読まれる */
+  stroke-dasharray: 42 8;
+  transition:
+    stroke-dasharray var(--t-med) var(--ease-out-quint),
+    opacity var(--t-med) linear;
+}
+
+.dc[data-state='drag'] .dc-arc-in {
+  opacity: 0.55;
+}
+
+.dc[data-state='drag'] .dc-ring {
+  color: rgba(79, 216, 255, 0.5);
+}
+
+/*
+  回る速さ(Phase 18、ブラウザで見比べて決めた)。
+
+  drag が続くのは掴むまでの 1〜3 秒しかないので、**1 秒眺めれば動いていると
+  分かる**必要がある(分からなければ弧はただ傾いて止まって見える)。同時に、
+  カーソルは figure ではなく instrument なので、目を奪ってはいけない。
+  読み取りの手がかりは 28.8° の隙間で、それがどれだけ動いたかで速さが読まれる。
+
+    6°/s (60s)  … 時計の秒針。静謐だが 1 秒では動いたと分からない
+    20°/s(18s)  … 見れば動いている、見なければ気にならない ← これを採る
+    36°/s(10s)  … 目が追ってしまう。環が図から主役を奪い始める
+    180°/s〜    … ローディングスピナー。「待たされている」の記号になる
+
+  押下時は第二層(30°/s)が加わって合成 50°/s。掴んだ瞬間に環が噛んだと
+  分かる差は要るが、掴んだあとは注意が図の回転へ移るので 3 倍は超えない。
+  animation-duration の差し替えではなく層を足すのは、duration を変えると
+  進行率 t/d が飛んで環が瞬間移動するため(層なら角速度が素直に合成される)。
+*/
+@keyframes dc-rotor {
+  to {
+    rotate: 360deg;
+  }
+}
+
+.dc-rotor {
+  animation: dc-rotor 18s linear infinite;
+  /* idle / hover では回らない。位相は保たれるので再開時に飛ばない */
+  animation-play-state: paused;
+}
+
+.dc-rotor-fast {
+  animation: dc-rotor 12s linear infinite;
+  animation-play-state: paused;
+}
+
+/* 内側の平面は逆回り。同じ @keyframes を逆再生するだけ */
+.dc-rotor-rev {
+  animation-direction: reverse;
+}
+
+.dc[data-state='drag'] .dc-rotor {
+  animation-play-state: running;
+}
+
+.dc[data-down='true'] .dc-rotor-fast {
+  animation-play-state: running;
 }
 
 .dc[data-visible='true'] .dc-ring,
 .dc[data-visible='true'] .dc-dot {
   opacity: 1;
-}
-
-.dc[data-visible='true'][data-state='drag'] .dc-label {
-  opacity: 1;
-}
-
-.dc[data-state='drag'] .dc-ring {
-  border-color: rgba(79, 216, 255, 0.5);
 }
 
 /* ネイティブカーソルを消すのは、実際にカーソルが載っているあいだだけ */
@@ -3365,9 +3464,18 @@ html {
   .pl-panel,
   .pl-rail,
   .dc-ring,
-  .dc-dot,
-  .dc-label {
+  .dc-ring-g,
+  .dc-arc,
+  .dc-arc-in,
+  .dc-dot {
     transition: none;
+  }
+
+  /* カーソルはそもそも createCursor が null を返して作られないが、
+     この作品は二重に保険を掛ける流儀。環は回さない */
+  .dc-rotor,
+  .dc-rotor-fast {
+    animation: none;
   }
 
   /*
