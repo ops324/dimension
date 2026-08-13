@@ -5,7 +5,7 @@
 
 **DIMENSION** is an artistic-scientific web experience for visualizing structures beyond three dimensions — the Hopf fibration, the Clifford torus, n-dimensional polytopes (n = 3…10), and the perception of one dimension seen from another.
 
-**🌐 公開URL: https://ops324.github.io/dimension/**
+**🌐 公開URL: https://dimension-vert.vercel.app**(ミラー: https://ops324.github.io/dimension/)
 
 ## 体験 / Experience
 
@@ -37,7 +37,7 @@
 いつでも「ギャラリーへ入る前」のスクロール位置へ帰る。
 
 ```
-https://ops324.github.io/dimension/?gallery=clifford
+https://dimension-vert.vercel.app/?gallery=clifford
 ```
 
 ### 描画品質

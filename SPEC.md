@@ -5,7 +5,7 @@
 
 | | |
 |---|---|
-| 公開URL | **https://ops324.github.io/dimension/** |
+| 公開URL | **https://dimension-vert.vercel.app**(本命、Vercel。main push で自動デプロイ)/ https://ops324.github.io/dimension/(ミラー、GitHub Pages。同じく自動デプロイ) |
 | リポジトリ | https://github.com/ops324/dimension |
 | 版 | **Phase 18 時点**(PR #1〜#31 マージ済み)。Phase 12b までは独立監査エージェントがコードとの整合性を検証済み。Phase 13 / 14a / 14b / 14c は独立監査のプランに基づいて実装し、記載の数値はすべてブラウザ実測。Phase 15 は解説の**読み手**を広げ(§7.6)、Phase 16 は物語を**触れる**ものにし(§7.7)、Phase 17 はカーソルの下で時空が歪む重力レンズを足し(§4.7)、Phase 18 はカーソルそのものを回転子にした(§7.8) |
 | 形態 | 完全静的サイト(サーバー処理・API・環境変数なし) |
@@ -915,7 +915,7 @@ push to main / pull_request
   4 本とも 2〜3 メジャー遅れていたことが分かった(checkout v4 対 v7 など)。
   失敗の型は「直せなかった」ではなく**「気づかなかった」**なので、仕組みで塞ぐ。
   npm は対象外 ── three の exact pin は罠#11 に基づく意図的な仕様で、自動 PR がそれと戦う
-- `vite.config.ts` の `base: './'`(相対パス出力)により、`https://ops324.github.io/dimension/` のようなサブパス配信でも変更なしで動く。カスタムドメインに切り替えても同様
+- `vite.config.ts` の `base: './'`(相対パス出力)により、`https://ops324.github.io/dimension/` のようなサブパス配信でも、Vercel のようなルート配信でも変更なしで動く。カスタムドメインに切り替えても同様
 - 手動再実行は `workflow_dispatch` でも可能
 
 ---
