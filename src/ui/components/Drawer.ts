@@ -1,22 +1,29 @@
 /**
- * Drawer — 解説の引き出し(Phase 9b)。
+ * Drawer — 解説の引き出し(Phase 9b、Phase 15 でコーデックスへ)。
  *
  * 幾何は Phase 7 のまま(デスクトップは左から差し込む板、モバイルは下からの
  * フルシート)。変えたのは**開いたあとに何が起きるか**:
  *
  *   ① 背後をわずかに落とす暗幕。blur は敷かない ── 全画面の backdrop-filter は
  *      ギャラリー中の WebGL と真正面からフレーム時間を取り合うため。
- *   ② 見出しは SplitText の文字で立ち上がり、本文は段落ごとに 60ms ずつ遅れて
+ *   ② 見出しは SplitText の文字で立ち上がり、本文はブロックごとに 60ms ずつ遅れて
  *      浮かび上がる(**開いたときだけ**。閉じるのは一息で引く)。
  *   ③ 板の縁に 1px のグラデーションヘアライン(CSS 側の ::after)。
  *   ④ 閉じる ✕ には磁力。
  *
- * 本文を**段落単位で**動かすのは content.ts の解説が `<em>` と `<sup>` を含む
- * ためで、SplitText の行分割は textContent で組み直すので指数の組版が壊れる
- * (S³ が S3 になる)。数式の正しさは動きより上位 ── 行の代わりに段落を、
- * 同じ 60ms の階段で送る。
+ * Phase 15: 中身が生 HTML の段落列から**コーデックス(図鑑)構造**になった。
+ * setContent は content.ts の ExhibitCodex を受け取り、
+ *   フック → 導入 → たとえ話カード → 観察 → クエスト → 図鑑データ → DEEP DIVE
+ * の順で DOM を組む。従来の科学解説は DEEP DIVE(<details>)の中へ沈み、
+ * 潜りたい人だけが開く。立ち上がりの階段は段落単位からブロック単位へ変わった
+ * だけで、60ms の刻みも fill: backwards も同じ。
+ *
+ * 深い層を SplitText で動かさないのは従来と同じ理由 ── 解説は `<em>` と `<sup>`
+ * を含み、行分割は textContent で組み直すので指数の組版が壊れる(S³ が S3 になる)。
+ * 数式の正しさは動きより上位。
  */
 
+import type { ExhibitCodex } from '../content';
 import { EASE, cancelAll, h, play, type Component } from './component';
 import { reveal, splitChars, type SplitHandle } from './SplitText';
 import { magnetize, type Magnet } from './MagneticButton';
@@ -38,10 +45,12 @@ const TITLE_MS = 620;
 /** 段落の立ち上がり(px) */
 const RISE = 10;
 
-/** 焦点の閉じ込めが巡回する対象(Phase 14c)。押された瞬間に数え直す */
+/** 焦点の閉じ込めが巡回する対象(Phase 14c)。押された瞬間に数え直す。
+    summary は Phase 15 の DEEP DIVE ── ネイティブに焦点を受けるのに一覧から
+    漏れると、そこで Tab が閉じ込めの外へ抜ける */
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), ' +
-  'textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+  'textarea:not([disabled]), summary, [tabindex]:not([tabindex="-1"])';
 
 export class Drawer implements Component {
   readonly el: HTMLElement;
@@ -95,12 +104,22 @@ export class Drawer implements Component {
   /**
    * 中身の差し替え。**開いていないときにだけ**呼ばれる想定
    * (展示の切替はドロワーを閉じた状態で走る)。
+   *
+   * Phase 15: コーデックス構造で組み直す。bodyEl の**直接の子**が
+   * reveal() の階段の 1 段になるので、意味のまとまり = 1 ブロックを保つこと。
    */
-  setContent(title: string, html: string): void {
+  setContent(title: string, codex: ExhibitCodex, deepHtml: string): void {
     this.stop();
     this.titleEl.textContent = title;
-    // 解説は content.ts の定数のみ(外部入力は入らない)
-    this.bodyEl.innerHTML = html;
+    this.bodyEl.replaceChildren(
+      h('p', 'dw-hook', { text: codex.hook }),
+      h('p', 'dw-intro', { text: codex.intro }),
+      buildMetaphor(codex),
+      buildObserve(codex),
+      buildQuests(codex),
+      buildStats(codex),
+      buildDeep(deepHtml),
+    );
   }
 
   show(): void {
@@ -241,6 +260,99 @@ export class Drawer implements Component {
       this.timer = 0;
     }
   }
+}
+
+/* ------------------------------------------------------- コーデックスの部品
+
+   ラベルは「EN / 日本語」の複合。EN はモノスペースの飾りなので aria-hidden にし、
+   読み上げには日本語だけを通す(タブやナビと同じ規律)。
+*/
+
+function label(en: string, jp: string): HTMLElement {
+  const node = h('p', 'dw-label');
+  node.append(
+    h('span', 'dw-label-en', { text: en, lang: 'en', 'aria-hidden': 'true' }),
+    h('span', 'dw-label-jp', { text: jp }),
+  );
+  return node;
+}
+
+/** たとえ話カード。1 展示に 1 本だけの比喩を、額に入れて飾る */
+function buildMetaphor(codex: ExhibitCodex): HTMLElement {
+  const card = h('section', 'dw-card');
+  card.append(
+    label('ANALOGY', 'たとえるなら'),
+    h('p', 'dw-card-title', { text: codex.metaphorTitle }),
+    h('p', 'dw-card-body', { text: codex.metaphor }),
+  );
+  return card;
+}
+
+/** 観察ポイント。◆ のマーカーは CSS(::before)が打つ */
+function buildObserve(codex: ExhibitCodex): HTMLElement {
+  const section = h('section', 'dw-observe');
+  const list = h('ul', 'dw-observe-list');
+  for (const item of codex.observe) list.append(h('li', undefined, { text: item }));
+  section.append(label('OBSERVE', 'いま見えているもの'), list);
+  return section;
+}
+
+/** クエスト。番号 + 命令形タイトル + 「何が見られるか」の予告 */
+function buildQuests(codex: ExhibitCodex): HTMLElement {
+  const section = h('section', 'dw-quests');
+  section.append(label('TRY THIS', 'やってみよう'));
+  for (let i = 0; i < codex.quests.length; i++) {
+    const quest = codex.quests[i];
+    const row = h('div', 'dw-quest');
+    const num = h('span', 'dw-quest-num', {
+      text: String(i + 1).padStart(2, '0'),
+      'aria-hidden': 'true',
+    });
+    const text = h('div', 'dw-quest-text');
+    text.append(
+      h('p', 'dw-quest-title', { text: quest.title }),
+      h('p', 'dw-quest-body', { text: quest.body }),
+    );
+    row.append(num, text);
+    section.append(row);
+  }
+  return section;
+}
+
+/** 図鑑データ。dl で組む(label と value の対は意味的にも定義リスト) */
+function buildStats(codex: ExhibitCodex): HTMLElement {
+  const section = h('section', 'dw-stats');
+  const grid = h('dl', 'dw-stat-grid');
+  for (const stat of codex.stats) {
+    const cell = h('div', 'dw-stat');
+    cell.append(
+      h('dt', 'dw-stat-label', { text: stat.label, lang: 'en' }),
+      h('dd', 'dw-stat-value', { text: stat.value }),
+    );
+    grid.append(cell);
+  }
+  section.append(label('DATA', '図鑑データ'), grid);
+  return section;
+}
+
+/**
+ * DEEP DIVE。従来の科学解説がまるごとここに沈む。
+ * <details> を使うのは、開閉の状態管理・キーボード操作・読み上げが
+ * ネイティブに揃うため(自前のトグルで作り直す理由がない)。
+ */
+function buildDeep(deepHtml: string): HTMLElement {
+  const details = h('details', 'dw-deep');
+  const summary = h('summary', 'dw-deep-summary');
+  summary.append(
+    h('span', 'dw-deep-en', { text: 'DEEP DIVE', lang: 'en', 'aria-hidden': 'true' }),
+    h('span', 'dw-deep-jp', { text: 'もっと深く潜る' }),
+    h('span', 'dw-deep-glyph', { text: '◇', 'aria-hidden': 'true' }),
+  );
+  const body = h('div', 'dw-deep-body');
+  // 解説は content.ts の定数のみ(外部入力は入らない)
+  body.innerHTML = deepHtml;
+  details.append(summary, body);
+  return details;
 }
 
 /* ------------------------------------------------------------------ 内部 */
