@@ -8,9 +8,11 @@ import { projectPerspective } from '../math/projection';
 
 import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
+import { PhaseHistory } from '../render/phaseHistory';
 import { CYAN, GOLD, cosinePalette } from '../render/palette';
 
 import type { ScrollDirector } from '../core/scrollDirector';
+import type { QualityDetail } from '../core/quality';
 import type { EngineCtx, Exhibit } from './exhibit';
 
 /**
@@ -311,6 +313,59 @@ const PARALLAX_PITCH = 0.013;
  * ドラッグを離したときの復帰(0 → 1)もこの率なので、約 0.3 秒かけて戻る。
  */
 const PARALLAX_RATE = 3;
+/* --------------------------------------------------- 回転の残響(Phase 23)
+
+   5 次元・6 次元では、投影された 192 本の線が一瞬ごとに別の形へ組み変わる。
+   人間はその運動を追えない ── 追えないこと自体を、見えるものへ翻訳する。
+
+   **実際に記録した位相からしか作らない。** 0.35 / 0.70 / 1.05 秒前の姿を薄く重ねる。
+   スクリーンスペースの蓄積バッファ(残像を画面に焼く方式)は採らない: カメラが
+   動いた瞬間に嘘になるし、加算合成では図の可読性(優先順位②)を真っ先に壊す。
+   位相のリングバッファ(render/phaseHistory.ts)から本物の過去を引き、
+   同じ幾何を同じ投影で描き直す ── これは「さっき本当にそこに居た」姿である。
+
+   **辺だけ・粗い細分で描く。** 頂点のゴーストは「物体」に見えてしまう(光る点は
+   実体として読まれる)。運動の痕跡として読ませたいので線だけにする。細分は 16 → 4:
+   不透明度 0.12 以下では投影カスケードの曲率のわずかな差は見えず、点数は 1/4 になる。
+   計測: 本体の narrative.update は 6D で 0.189ms。ゴースト 3 枚で +0.9 倍が上限。
+
+   **ゴールドの誕生フラッシュは乗せない。** あれは「いま生まれつつある軸」の記号で、
+   過去のコピーが現在で光るのは嘘になる(そして計算も減る)。
+*/
+
+const GHOST_COUNT = 3;
+/** 1 枚ごとに何秒さかのぼるか */
+const GHOST_STEP = 0.35;
+/** 各ゴーストの輝度倍率(主図形を 1 としたとき) */
+const GHOST_GAINS = [0.12, 0.07, 0.04] as const;
+/** ゴーストの細分割数(本体は 16) */
+const GHOST_SUBDIV = 4;
+/** 192 × 5 = 960 点 */
+const GHOST_SUB_POINTS = 192 * (GHOST_SUBDIV + 1);
+/** 192 × 4 = 768 線分 / 枚 */
+const GHOST_SEGMENTS = 192 * GHOST_SUBDIV;
+
+/**
+ * 残響が現れはじめる次元と、開き切るまでの幅。
+ * 4.5 → 5.0 は「第 5 の軸が生まれる」瞬間そのもの ── 入場は劇的に。
+ */
+const GHOST_GATE = 4.5;
+const GHOST_GATE_WIDTH = 0.5;
+
+/**
+ * 加算エネルギーの**部分**補正(既知の罠 #6 の応用)。
+ *
+ * ゴーストの輝度の総和は 0.23 だが、それを丸ごと主図形から割り引くのは行き過ぎる ──
+ * ゴーストは回転でずれた位置にあり、主図形と重なるのは一部だけなので、
+ * 重ならない領域まで暗くなってしまう。実測(6D でゴースト on/off の図領域平均輝度)で
+ * 決めた実効の重なり率がこれ。
+ */
+const GHOST_OVERLAP_K = 0.5;
+
+/** 履歴の容量。60fps で 2.13 秒 ── 必要なのは 1.05 秒なので倍の余裕がある */
+const GHOST_HISTORY_CAPACITY = 128;
+/** これ以上フレームが飛んだら履歴を捨てる(タブ復帰・長いフレーム落ち) */
+const GHOST_HISTORY_MAX_GAP = 0.5;
 
 /** 深度(投影後 z、正規化済み ∈[-1,1])→ LUT の行インデックス */
 function lutIndexOf(depth: number, scale: number): number {
@@ -360,6 +415,28 @@ export class NarrativeScene implements Exhibit {
   private readonly planeAngles = new Float64Array(ROTATION_PLANES.length);
   /** 同・合成角速度(rad/s)。計器の点灯判定に使う */
   private readonly planeOmegas = new Float64Array(ROTATION_PLANES.length);
+  // --- 回転の残響(Phase 23)----------------------------------------------------
+  private ghostBatch: LineBatch | null = null;
+  /** 粗い細分の元座標(6D)。本体とは別に 1 本だけ持つ */
+  private ghostBase!: Float64Array;
+  private ghostWork!: Float64Array;
+  private ghostProj!: Float32Array;
+  /** サンプルした過去の位相。**this.rots を汚さない**ための別インスタンス */
+  private readonly ghostRots: PlaneRotation[] = SCHEDULE.map((s) => ({
+    i: s.i,
+    j: s.j,
+    angle: 0,
+  }));
+  private readonly ghostPhases = new Float64Array(SCHEDULE.length);
+  private readonly history = new PhaseHistory(
+    SCHEDULE.length,
+    GHOST_HISTORY_CAPACITY,
+    GHOST_HISTORY_MAX_GAP,
+  );
+  /** 品質ティアが残響を許すか(HIGH / ULTRA のみ) */
+  private tierAllowsGhosts = true;
+  /** 直前のフレームで残響を描いていたか。落とすときに一度だけ 0 を書く */
+  private ghostsDrawn = false;
 
   /** engine のカメラ。物語モードでは OrbitControls を使わずここから直接駆動する */
   private camera: THREE.PerspectiveCamera | null = null;
@@ -419,7 +496,12 @@ export class NarrativeScene implements Exhibit {
     this.depthLut = new Float32Array(LUT_SIZE * 3);
     this.goldLut = new Float32Array(LUT_SIZE * 3);
 
-    this.buildSubdivided(poly);
+    this.ghostBase = new Float64Array(GHOST_SUB_POINTS * N);
+    this.ghostWork = new Float64Array(GHOST_SUB_POINTS * N);
+    this.ghostProj = new Float32Array(GHOST_SUB_POINTS * 3);
+
+    this.buildSubdivided(poly, SUBDIV, this.subBase);
+    this.buildSubdivided(poly, GHOST_SUBDIV, this.ghostBase);
     this.vertBase.set(poly.vertices);
     this.buildLuts();
 
@@ -452,7 +534,17 @@ export class NarrativeScene implements Exhibit {
       this.syncDolly(ctx.engine.portraitDolly);
     });
 
-    this.group.add(this.lineBatch.object, this.pointBatch.object);
+    /*
+      残響は**主マテリアルを共有する**(Phase 23)。減光は頂点色で言うので、
+      第 2 のマテリアルは要らない ── 線幅も縦長ドリーも fog も既知の罠 #3 の扱いも、
+      すべて 1 本の LineMaterial のまま。増えるのはドローコール 1 つだけ。
+      主図形より**先に** add する = 残響は主図形の下に敷かれる。
+    */
+    this.ghostBatch = new LineBatch(GHOST_SEGMENTS * GHOST_COUNT, this.material);
+    this.group.add(this.ghostBatch.object, this.lineBatch.object, this.pointBatch.object);
+
+    // 品質ティアの購読(quality.ts が投げる CustomEvent)。残響は HIGH / ULTRA だけ
+    window.addEventListener('dimension:quality', this.onQuality);
 
     this.camera = ctx.engine.camera;
     /*
@@ -549,6 +641,18 @@ export class NarrativeScene implements Exhibit {
     }
   };
 
+  /**
+   * 品質ティアの購読(Phase 23)。残響は HIGH / ULTRA でだけ描く。
+   *
+   * **任意の購読**にしてあるのが肝 ── quality.ts は誰が聞いているかを知らないし、
+   * ここは購読しなくても動く。BALANCED へ落ちた次のフレームで線分数 0 を書いて
+   * 静かに消える(GPU コストもゼロになる)。
+   */
+  private readonly onQuality = (event: Event): void => {
+    const detail = (event as CustomEvent<QualityDetail>).detail;
+    this.tierAllowsGhosts = detail.tier !== 'BALANCED';
+  };
+
   private readonly onPointerEnd = (event: PointerEvent): void => {
     if (this.dragId !== event.pointerId) return;
     this.dragId = -1;
@@ -586,6 +690,9 @@ export class NarrativeScene implements Exhibit {
 
     // 2) 回転スケジュール(積分位相)
     this.advancePhases(dimLevel, dt);
+    // 残響のために「いまの位相」を記録する(Phase 23)。ゲートが閉じていても
+    // 記録は続ける ── 開いた瞬間に 1.05 秒ぶんの過去がもう揃っている
+    this.history.record(t, this.phases);
 
     // 3) 6D 回転 → 透視カスケードで 3D へ
     rotateBatch(this.subWork, this.subWork, N, SUB_POINTS, this.rots);
@@ -596,12 +703,17 @@ export class NarrativeScene implements Exhibit {
 
     // 4) 重なり補正 — 畳まれた軸の枚数ぶん輝度を割り戻す
     const overlap = this.overlapCompensation();
-    this.lineBrightness = LINE_BASE_BRIGHTNESS * overlap;
+    // 残響が乗るぶんだけ主図形を先に引く(部分補正、既知の罠 #6)
+    const ghostOpen = clamp01((dimLevel - GHOST_GATE) / GHOST_GATE_WIDTH);
+    const ghostAmount = this.tierAllowsGhosts && !this.reduceMotion ? ghostOpen : 0;
+    const ghostSum = ghostAmount * (GHOST_GAINS[0] + GHOST_GAINS[1] + GHOST_GAINS[2]);
+    this.lineBrightness = (LINE_BASE_BRIGHTNESS * overlap) / (1 + ghostSum * GHOST_OVERLAP_K);
 
     // 5) 線分への展開と彩色 / 頂点グローの深度キュー
     const depthScale = this.depthScaleFor(dimLevel);
     this.scatterSegments(depthScale);
     this.shadeVertices(poly.vertexCount, depthScale);
+    this.updateGhosts(t, depthScale, ghostAmount);
 
     this.lineBatch.commitPositions(SUB_SEGMENTS);
     this.lineBatch.commitColors(SUB_SEGMENTS);
@@ -620,7 +732,10 @@ export class NarrativeScene implements Exhibit {
   }
 
   dispose(): void {
+    window.removeEventListener('dimension:quality', this.onQuality);
     this.lineBatch?.dispose();
+    // マテリアルは主バッチと共有なので、ここで dispose するのは geometry だけ
+    this.ghostBatch?.dispose();
     this.pointBatch?.dispose();
     this.material?.dispose();
     const canvas = this.canvas;
@@ -646,18 +761,17 @@ export class NarrativeScene implements Exhibit {
     this.material.linewidth = LINE_WIDTH / dolly;
   }
 
-  /** 辺ごとに SUBDIV+1 点を 6D のまま線形補間して連続配置する */
-  private buildSubdivided(poly: Polytope): void {
-    const invS = 1 / SUBDIV;
+  /** 辺ごとに subdiv+1 点を 6D のまま線形補間して連続配置する */
+  private buildSubdivided(poly: Polytope, subdiv: number, base: Float64Array): void {
+    const invS = 1 / subdiv;
     const edges = poly.edges;
     const vertices = poly.vertices;
-    const base = this.subBase;
 
     let p = 0;
     for (let e = 0; e < poly.edgeCount; e++) {
       const a = edges[e * 2] * N;
       const b = edges[e * 2 + 1] * N;
-      for (let s = 0; s <= SUBDIV; s++) {
+      for (let s = 0; s <= subdiv; s++) {
         const f = s * invS;
         const o = p * N;
         for (let k = 0; k < N; k++) {
@@ -790,6 +904,117 @@ export class NarrativeScene implements Exhibit {
       const slot = PLANE_SLOT[r];
       planeAngles[slot] += phase;
       planeOmegas[slot] += omega;
+    }
+  }
+
+  /**
+   * 回転の残響(Phase 23)。0.35 / 0.70 / 1.05 秒前の姿を薄く重ねる。
+   *
+   * ゲート(次元・品質ティア・reduced-motion)が閉じているあいだは線分数 0 を
+   * **一度だけ**書いて、以後は CPU も GPU も一切払わない。
+   *
+   * 現在の伸長率(geomExtents)は主図形と同じものを使う ── 変えるのは**位相だけ**。
+   * 「1 秒前はもっと低い次元だった」ではなく「同じ次元の、1 秒前の向き」を見せたい。
+   */
+  private updateGhosts(t: number, depthScale: number, amount: number): void {
+    const batch = this.ghostBatch;
+    const poly = this.polytope;
+    if (batch === null || poly === null) return;
+
+    if (amount <= 0) {
+      if (this.ghostsDrawn) {
+        this.ghostsDrawn = false;
+        batch.commitPositions(0);
+      }
+      return;
+    }
+    this.ghostsDrawn = true;
+
+    const geo = this.geomExtents;
+    const base = this.ghostBase;
+    const work = this.ghostWork;
+    const proj = this.ghostProj;
+    const rots = this.ghostRots;
+    const phases = this.ghostPhases;
+
+    for (let g = 0; g < GHOST_COUNT; g++) {
+      // 過去の位相を引き、**this.rots とは別の**回転リストへ書く
+      this.history.sample(t - GHOST_STEP * (g + 1), phases);
+      for (let r = 0; r < SCHEDULE.length; r++) rots[r].angle = phases[r];
+
+      for (let o = 0; o < GHOST_SUB_POINTS * N; o += N) {
+        work[o] = base[o] * geo[0];
+        work[o + 1] = base[o + 1] * geo[1];
+        work[o + 2] = base[o + 2] * geo[2];
+        work[o + 3] = base[o + 3] * geo[3];
+        work[o + 4] = base[o + 4] * geo[4];
+        work[o + 5] = base[o + 5] * geo[5];
+      }
+
+      rotateBatch(work, work, N, GHOST_SUB_POINTS, rots);
+      projectPerspective(work, N, GHOST_SUB_POINTS, DIST, proj);
+
+      this.scatterGhost(g, depthScale, this.lineBrightness * amount * GHOST_GAINS[g]);
+    }
+
+    batch.commitPositions(GHOST_SEGMENTS * GHOST_COUNT);
+    batch.commitColors(GHOST_SEGMENTS * GHOST_COUNT);
+  }
+
+  /**
+   * ゴースト 1 枚を線分バッファの g 番目の区画へ展開する。
+   *
+   * 本体の scatterSegments との違いは 3 つだけ ── 粗い細分、書き込み先の区画、
+   * そして**ゴールドの誕生フラッシュを乗せない**こと(過去のコピーが「いま
+   * 生まれつつある」と言うのは嘘になる)。深度キューの配色は主図形と共有する。
+   */
+  private scatterGhost(ghostIndex: number, depthScale: number, bright: number): void {
+    const poly = this.polytope;
+    const batch = this.ghostBatch;
+    if (poly === null || batch === null || poly.edgeAxis === undefined) return;
+
+    const edgeAxis = poly.edgeAxis;
+    const proj = this.ghostProj;
+    const lut = this.depthLut;
+    const pos = batch.positions;
+    const col = batch.colors;
+    const extents = this.extents;
+
+    let p = 0;
+    let seg = ghostIndex * GHOST_SEGMENTS;
+
+    for (let e = 0; e < poly.edgeCount; e++) {
+      const gain = extents[edgeAxis[e]] * bright;
+
+      let i0 = lutIndexOf(proj[p * 3 + 2], depthScale);
+      for (let s = 0; s < GHOST_SUBDIV; s++) {
+        const p1 = p + 1;
+        const i1 = lutIndexOf(proj[p1 * 3 + 2], depthScale);
+
+        const so = seg * 6;
+        const a = p * 3;
+        const b = p1 * 3;
+        pos[so] = proj[a];
+        pos[so + 1] = proj[a + 1];
+        pos[so + 2] = proj[a + 2];
+        pos[so + 3] = proj[b];
+        pos[so + 4] = proj[b + 1];
+        pos[so + 5] = proj[b + 2];
+
+        const c0 = i0 * 3;
+        const c1 = i1 * 3;
+        col[so] = lut[c0] * gain;
+        col[so + 1] = lut[c0 + 1] * gain;
+        col[so + 2] = lut[c0 + 2] * gain;
+        col[so + 3] = lut[c1] * gain;
+        col[so + 4] = lut[c1 + 1] * gain;
+        col[so + 5] = lut[c1 + 2] * gain;
+
+        i0 = i1;
+        p = p1;
+        seg++;
+      }
+      p++; // 辺の終端点を消費して次の辺の先頭へ
     }
   }
 
