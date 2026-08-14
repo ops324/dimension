@@ -170,6 +170,54 @@ const SCHEDULE: readonly PlaneSpec[] = [
 /** ゲートの立ち上がり幅(dimLevel) */
 const GATE_WIDTH = 0.8;
 
+/* ------------------------------------------------- 回転の計器(Phase 21)
+
+   角度は毎フレーム作られていたのに、どこにも出ていなかった。物語がやっている
+   ことは「軸を足し、その軸を含む平面を回す」ことなので、開いている平面の角度は
+   この作品でいちばん読む価値のある数値になる。
+
+   **枠ではなく平面ごとに合算する**(正しさの要):
+   SCHEDULE は 7 枠あるが平面は 6 枚しかない ── (1,2) が低次元タンブルと等傾ペアの
+   二か所に現れる。同じ平面まわりの回転は可換で、角度は素直に加算される。したがって
+   計器に出すのは枠の位相ではなく **同一平面の位相の和** でなければならない。
+   片方だけを出すと、4D プラトーで (0,3) と厳密に一致するはずの等傾ペアが
+   一致しない数字になり、計器が嘘をつく。
+
+   綴りが二文字なのは 9px の計器だからで、名前を増やしたのではない:
+   パネル(hopf / clifford)は「ω₁ / 平面 (0,1)」という形式的な名前を持つ余白が
+   あるが、計器は一瞥で読む場所で、括弧と読点は記号の雑音になる。同じ平面に
+   短い綴りを 1 つ与えただけで、軸の番号(0..5)との対応は AXIS_LETTERS が唯一の表。
+*/
+const AXIS_LETTERS = 'XYZWVU';
+
+export interface RotationPlane {
+  readonly i: number;
+  readonly j: number;
+  /** 'XW' のような二文字。軸番号 i,j の綴り */
+  readonly label: string;
+}
+
+/** SCHEDULE の枠番号 → ROTATION_PLANES の行番号 */
+const PLANE_SLOT: number[] = [];
+
+/** 計器に出す一意な回転平面(SCHEDULE の登場順 = ゲートが開く順) */
+export const ROTATION_PLANES: readonly RotationPlane[] = (() => {
+  const planes: RotationPlane[] = [];
+  for (const spec of SCHEDULE) {
+    let slot = planes.findIndex((p) => p.i === spec.i && p.j === spec.j);
+    if (slot < 0) {
+      slot = planes.length;
+      planes.push({
+        i: spec.i,
+        j: spec.j,
+        label: AXIS_LETTERS[spec.i] + AXIS_LETTERS[spec.j],
+      });
+    }
+    PLANE_SLOT.push(slot);
+  }
+  return planes;
+})();
+
 /**
  * 停止中の平面の位相を 0 へ巻き戻す速さ。
  *
@@ -243,6 +291,28 @@ const LOOK_POLAR_MAX = Math.PI - 0.22;
 /** ドラッグへの追従レート。高めにして 1:1 に近づけつつ、角を丸める */
 const LOOK_RATE = 14;
 
+/* ------------------------------------------------- 気配のパララックス(Phase 22)
+
+   見回し(Phase 16)は「掴んで回す」意思の表現だった。こちらはその手前 ──
+   掴まなくても、ポインタを動かすだけで構図がごくわずかに追ってくる。
+   図形を動かしているのではなく、**観測者が空間の中に居る**ことの表現なので、
+   振幅はドラッグの 1/100 の桁に置く(気づくより先に、居ることが分かる量)。
+
+   位置の情報源は重力レンズの uniform(postfx.lens)ただ 1 つ。専用のリスナーも
+   環境ゲートも持たない ── ゲートはドライバ側にあり、作られない環境では
+   amount が永遠に 0 なので、ここの計算は恒等で回る(§4.7)。
+*/
+
+/** ポインタが端まで行ったときの方位角(rad)。章半径 4.2〜6.4 で弧長 ~0.09〜0.14 */
+const PARALLAX_YAW = 0.022;
+/** 同・仰角。方位より鈍いのは見回しと同じ理由(縦は構図が崩れやすい) */
+const PARALLAX_PITCH = 0.013;
+/**
+ * 追従レート(1/s)。レンズ側の位置 7/s にこれを重ねて **二段の遅れ**にする ──
+ * 3/s 単独より重く、ポインタを止めたあとも少しだけ流れてから止まる。
+ * ドラッグを離したときの復帰(0 → 1)もこの率なので、約 0.3 秒かけて戻る。
+ */
+const PARALLAX_RATE = 3;
 /* --------------------------------------------------- 回転の残響(Phase 23)
 
    5 次元・6 次元では、投影された 192 本の線が一瞬ごとに別の形へ組み変わる。
@@ -338,9 +408,13 @@ export class NarrativeScene implements Exhibit {
 
   /** 平面回転。オブジェクトは使い回して angle だけ書き換える */
   private readonly rots: PlaneRotation[] = SCHEDULE.map((s) => ({ i: s.i, j: s.j, angle: 0 }));
-  /** 積分位相(平面ごと) */
+  /** 積分位相(SCHEDULE の枠ごと) */
   private readonly phases = new Float64Array(SCHEDULE.length);
 
+  /** 平面ごとの合成角(rad)。同一平面の枠を足し合わせたもの ── 計器の唯一の情報源 */
+  private readonly planeAngles = new Float64Array(ROTATION_PLANES.length);
+  /** 同・合成角速度(rad/s)。計器の点灯判定に使う */
+  private readonly planeOmegas = new Float64Array(ROTATION_PLANES.length);
   // --- 回転の残響(Phase 23)----------------------------------------------------
   private ghostBatch: LineBatch | null = null;
   /** 粗い細分の元座標(6D)。本体とは別に 1 本だけ持つ */
@@ -379,6 +453,15 @@ export class NarrativeScene implements Exhibit {
   private dragY = 0;
   /** リスナを外せるように、canvas は init で受け取って持っておく */
   private canvas: HTMLCanvasElement | null = null;
+
+  // --- 気配のパララックス / 頂点の応答(Phase 22)--------------------------------
+  /** 重力レンズの uniform(読み取り専用の窓)。ポインタの唯一の情報源 */
+  private lens: THREE.Vector3 | null = null;
+  /** 平滑化後のパララックス角。ドラッグ中は 0 へ引き戻される */
+  private parYaw = 0;
+  private parPitch = 0;
+  /** 頂点の応答が眠っているか。0 を一度書いたら黙る(レンズと同じ作法) */
+  private cursorAsleep = true;
 
   private lineBrightness = LINE_BASE_BRIGHTNESS;
   /** 縦長ドリー倍率。resize でだけ更新し、カメラリグと線幅の両方がこれを読む */
@@ -464,6 +547,12 @@ export class NarrativeScene implements Exhibit {
     window.addEventListener('dimension:quality', this.onQuality);
 
     this.camera = ctx.engine.camera;
+    /*
+      ポインタの唯一の情報源(Phase 22)。重力レンズが既に持っている値を借りる ──
+      リスナーも環境ゲートも二重に持たない。ドライバが作られない環境(タッチ /
+      reduced-motion)では z が永遠に 0 なので、下の 2 つの表現は恒等で回る。
+    */
+    this.lens = ctx.engine.postfx.lens;
     // 起動時の 1 回(縦持ちで開かれたらこの時点で既に細い線で立ち上がる)
     this.syncDolly(ctx.engine.portraitDolly);
 
@@ -577,6 +666,19 @@ export class NarrativeScene implements Exhibit {
     return this.director.dimLevel;
   }
 
+  /**
+   * 平面ごとの合成回転角(rad)。行の並びは ROTATION_PLANES と同じ。
+   * **配列は使い回す** ── 読み手は値をその場で使い、参照を溜めてはいけない。
+   */
+  get rotationAngles(): Float64Array {
+    return this.planeAngles;
+  }
+
+  /** 同・合成角速度(rad/s)。0 に近い平面は「止まっている」 */
+  get rotationOmegas(): Float64Array {
+    return this.planeOmegas;
+  }
+
   update(dt: number, t: number): void {
     const poly = this.polytope;
     if (!this.initialized || poly === null) return;
@@ -622,7 +724,10 @@ export class NarrativeScene implements Exhibit {
     const birth = 1 + BIRTH_GAIN * (1 - smoothstep(dimLevel));
     this.pointBatch.setBrightness(POINT_BASE_BRIGHTNESS * overlap * birth);
 
-    // 6) カメラリグ
+    // 6) カーソル近傍の頂点の応答(Phase 22)
+    this.syncCursor();
+
+    // 7) カメラリグ
     this.updateCamera(t, dt);
   }
 
@@ -678,6 +783,49 @@ export class NarrativeScene implements Exhibit {
     }
   }
 
+  /**
+   * 気配のパララックスを 1 フレーム進める(Phase 22)。
+   *
+   * **掴んでいるあいだは 0 へ引く。** ドラッグの振幅はこれの 100 倍あるので
+   * 競合しようがないのだが、掴んだ図がカーソルを微妙に追い続けるのは
+   * 「握っている」感触を濁す。スナップではなく同じ率で抜けていく。
+   */
+  private advanceParallax(dt: number): void {
+    const lens = this.lens;
+    const active = lens !== null && this.dragId === -1 && !this.reduceMotion;
+
+    // UV(左下原点)→ 中心からの符号付き比 −1..1。y は上が正
+    const gain = active && lens !== null ? lens.z : 0;
+    const px = active && lens !== null ? lens.x * 2 - 1 : 0;
+    const py = active && lens !== null ? lens.y * 2 - 1 : 0;
+
+    this.parYaw = expSmooth(this.parYaw, px * PARALLAX_YAW * gain, PARALLAX_RATE, dt);
+    this.parPitch = expSmooth(this.parPitch, -py * PARALLAX_PITCH * gain, PARALLAX_RATE, dt);
+  }
+
+  /**
+   * カーソル近傍の応答をシェーダーへ渡す(Phase 22)。
+   *
+   * レンズの UV(左下原点 0..1)を NDC(−1..1)へ開くだけ。y の向きはどちらも
+   * 上が正なので反転は要らない。強さが消えたら **0 を一度だけ書いて黙る** ──
+   * レンズドライバと同じ作法で、以後はシェーダーの分岐ごと眠る。
+   */
+  private syncCursor(): void {
+    const lens = this.lens;
+    const camera = this.camera;
+    if (lens === null || camera === null) return;
+
+    if (lens.z <= 0.001) {
+      if (!this.cursorAsleep) {
+        this.cursorAsleep = true;
+        this.pointBatch.setCursor(0, 0, 0, camera.aspect);
+      }
+      return;
+    }
+    this.cursorAsleep = false;
+    this.pointBatch.setCursor(lens.x * 2 - 1, lens.y * 2 - 1, lens.z, camera.aspect);
+  }
+
   /** extents モーフ本体。base を軸ごとにスケールして work へ書く */
   private applyExtents(dimLevel: number): void {
     const ext = this.extents;
@@ -725,6 +873,11 @@ export class NarrativeScene implements Exhibit {
   private advancePhases(dimLevel: number, dt: number): void {
     const phases = this.phases;
     const rots = this.rots;
+    // 計器用の合算器。平面ごとに毎フレーム積み直す(枠 → 平面は多対一)
+    const planeAngles = this.planeAngles;
+    const planeOmegas = this.planeOmegas;
+    planeAngles.fill(0);
+    planeOmegas.fill(0);
     for (let r = 0; r < SCHEDULE.length; r++) {
       const spec = SCHEDULE[r];
       const open =
@@ -747,6 +900,10 @@ export class NarrativeScene implements Exhibit {
 
       phases[r] = phase;
       rots[r].angle = phase;
+
+      const slot = PLANE_SLOT[r];
+      planeAngles[slot] += phase;
+      planeOmegas[slot] += omega;
     }
   }
 
@@ -1005,14 +1162,15 @@ export class NarrativeScene implements Exhibit {
     */
     this.yaw = expSmooth(this.yaw, this.yawTarget, LOOK_RATE, dt);
     this.pitch = expSmooth(this.pitch, this.pitchTarget, LOOK_RATE, dt);
+    this.advanceParallax(dt);
 
-    if (this.yaw !== 0 || this.pitch !== 0) {
+    if (this.yaw !== 0 || this.pitch !== 0 || this.parYaw !== 0 || this.parPitch !== 0) {
       const radius = Math.sqrt(x * x + y * y + z * z);
       if (radius > 1e-6) {
-        const azimuth = Math.atan2(x, z) + this.yaw;
+        const azimuth = Math.atan2(x, z) + this.yaw + this.parYaw;
         const base = Math.acos(clamp(y / radius, -1, 1));
         const wanted = base + this.pitch;
-        const polar = clamp(wanted, LOOK_POLAR_MIN, LOOK_POLAR_MAX);
+        let polar = clamp(wanted, LOOK_POLAR_MIN, LOOK_POLAR_MAX);
         if (polar !== wanted) {
           /*
             ここへ来るのは、章のカメラ自体が高い(または低い)ところに居て、
@@ -1024,6 +1182,14 @@ export class NarrativeScene implements Exhibit {
           this.pitch += overflow;
           this.pitchTarget += overflow;
         }
+
+        /*
+          パララックスは**廃棄の後**に足して、もう一度だけクランプする(Phase 22)。
+          前に混ぜると、上の overflow が pitchTarget へ書き戻されるときに
+          ±0.013rad ぶんが「ユーザーが引いた仰角」として恒久的に混入してしまう ──
+          気配は気配のまま、意思の側の状態を汚してはいけない。
+        */
+        polar = clamp(polar + this.parPitch, LOOK_POLAR_MIN, LOOK_POLAR_MAX);
 
         const sinPolar = Math.sin(polar);
         x = radius * sinPolar * Math.sin(azimuth);
