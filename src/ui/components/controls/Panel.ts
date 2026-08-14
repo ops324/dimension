@@ -59,6 +59,8 @@ export interface PanelBuilder {
   setValue(key: string, value: number | string | boolean): void;
   /** segmented の 1 選択肢だけを無効化する(m = n の禁止など) */
   setOptionDisabled(key: string, option: string, disabled: boolean): void;
+  /** button に「今この状態にある」印を立てる(プリセットの現在地。button 以外は無視) */
+  setActive(key: string, active: boolean): void;
   /** 部品のリスナと ResizeObserver を畳む(次の createPanel が自動で呼ぶ) */
   destroy(): void;
 }
@@ -211,6 +213,11 @@ class Panel implements PanelBuilder, Component {
     if (control !== undefined && control.kind === 'segmented') {
       control.setOptionDisabled(option, disabled);
     }
+  }
+
+  setActive(key: string, active: boolean): void {
+    const control = this.keyed.get(key);
+    if (control !== undefined && control.kind === 'button') control.setActive(active);
   }
 
   destroy(): void {
