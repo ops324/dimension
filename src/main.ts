@@ -1,12 +1,12 @@
 // フォントは @fontsource で自己ホスト(Google Fonts CDN への外部依存なし)。
-// Zen Kaku Gothic New は 400.css / 500.css を使う: これらは 121 個の unicode-range
+// Murecho は 400.css / 500.css を使う: これらは 120 個の unicode-range
 // スライスに分割された定義で、ブラウザは実際に使われたグリフを含むスライス
-// (各 ~7-15KB)だけを取得する。単一ファイルの japanese-400.css は 966KB を
+// (各 ~7-15KB)だけを取得する。単一ファイルの japanese-400.css は 1MB 近くを
 // 一括ダウンロードしてしまうため採用しない(プラン「技術スタック」節)。
 import '@fontsource/unbounded/600.css';
 import '@fontsource/unbounded/800.css';
-import '@fontsource/zen-kaku-gothic-new/400.css';
-import '@fontsource/zen-kaku-gothic-new/500.css';
+import '@fontsource/murecho/400.css';
+import '@fontsource/murecho/500.css';
 import '@fontsource/space-mono/400.css';
 import './style.css';
 

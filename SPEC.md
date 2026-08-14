@@ -387,7 +387,7 @@ play(el, keyframes, options)              // Web Animations API の単一入口(
 @fontsource で自己ホスト(CDN依存なし、オフライン動作)。
 
 - 英語ディスプレイ: **Unbounded** 600/800(letter-spacing .14em)。字数に応じて幅を満たすよう `clamp(2.2rem, calc(var(--display-fit)/(文字数×0.98)), 10rem)` で自動フィット
-- 日本語本文: **Zen Kaku Gothic New** 400/500(line-height 2.1、unicode-rangeスライスで必要グリフのみ取得)
+- 日本語本文: **Murecho** 400/500(line-height 2.1、unicode-rangeスライスで必要グリフのみ取得)。やや縦長で線が細く、字間を空けたときの余白が澄む ── Phase 20 で Zen Kaku Gothic New から差し替え
 - 数値・HUD: **Space Mono**
 
 ### 7.4 モバイル方針(図が主役)
