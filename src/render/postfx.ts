@@ -42,6 +42,17 @@ export interface PostFX {
    * 書き手は lens ドライバ(src/ui/lens.ts)ただ 1 つ。
    */
   setLens(cx: number, cy: number, amount: number): void;
+  /**
+   * いま書かれているレンズの値(x = cx, y = cy: UV 左下原点 / z = amount)。
+   *
+   * **これは読み取り専用の窓**で、返る Vector3 は uniform の実体そのもの ──
+   * 書き換えてはいけないし、参照を溜めてもいけない。用意した理由は Phase 22:
+   * 「ポインタがどこにあり、どれだけ効いているか」を必要とする表現が
+   * レンズ以外にも生まれたとき、**リスナーと環境ゲートを二重に持たない**ため。
+   * ゲート(pointer:fine / hover / reduced-motion)はドライバ 1 箇所にあり、
+   * 作られなければ amount は永遠に 0 のまま ── 読み手は分岐を持たなくていい。
+   */
+  readonly lens: THREE.Vector3;
 }
 
 const DEFAULT_SAMPLES = 4;
@@ -358,5 +369,6 @@ export function buildPostFX(
       // NaN は 0 側へ倒す(min/max の NaN 伝播は引数順に依存するため三項で書く)
       gradeLens.set(cx, cy, amount > 0 ? (amount < 1 ? amount : 1) : 0);
     },
+    lens: gradeLens,
   };
 }

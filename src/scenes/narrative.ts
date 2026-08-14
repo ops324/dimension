@@ -241,6 +241,29 @@ const LOOK_POLAR_MAX = Math.PI - 0.22;
 /** ドラッグへの追従レート。高めにして 1:1 に近づけつつ、角を丸める */
 const LOOK_RATE = 14;
 
+/* ------------------------------------------------- 気配のパララックス(Phase 22)
+
+   見回し(Phase 16)は「掴んで回す」意思の表現だった。こちらはその手前 ──
+   掴まなくても、ポインタを動かすだけで構図がごくわずかに追ってくる。
+   図形を動かしているのではなく、**観測者が空間の中に居る**ことの表現なので、
+   振幅はドラッグの 1/100 の桁に置く(気づくより先に、居ることが分かる量)。
+
+   位置の情報源は重力レンズの uniform(postfx.lens)ただ 1 つ。専用のリスナーも
+   環境ゲートも持たない ── ゲートはドライバ側にあり、作られない環境では
+   amount が永遠に 0 なので、ここの計算は恒等で回る(§4.7)。
+*/
+
+/** ポインタが端まで行ったときの方位角(rad)。章半径 4.2〜6.4 で弧長 ~0.09〜0.14 */
+const PARALLAX_YAW = 0.022;
+/** 同・仰角。方位より鈍いのは見回しと同じ理由(縦は構図が崩れやすい) */
+const PARALLAX_PITCH = 0.013;
+/**
+ * 追従レート(1/s)。レンズ側の位置 7/s にこれを重ねて **二段の遅れ**にする ──
+ * 3/s 単独より重く、ポインタを止めたあとも少しだけ流れてから止まる。
+ * ドラッグを離したときの復帰(0 → 1)もこの率なので、約 0.3 秒かけて戻る。
+ */
+const PARALLAX_RATE = 3;
+
 /** 深度(投影後 z、正規化済み ∈[-1,1])→ LUT の行インデックス */
 function lutIndexOf(depth: number, scale: number): number {
   const t = (depth * scale + 1) * 0.5 * LUT_MAX;
@@ -300,6 +323,15 @@ export class NarrativeScene implements Exhibit {
   private dragY = 0;
   /** リスナを外せるように、canvas は init で受け取って持っておく */
   private canvas: HTMLCanvasElement | null = null;
+
+  // --- 気配のパララックス / 頂点の応答(Phase 22)--------------------------------
+  /** 重力レンズの uniform(読み取り専用の窓)。ポインタの唯一の情報源 */
+  private lens: THREE.Vector3 | null = null;
+  /** 平滑化後のパララックス角。ドラッグ中は 0 へ引き戻される */
+  private parYaw = 0;
+  private parPitch = 0;
+  /** 頂点の応答が眠っているか。0 を一度書いたら黙る(レンズと同じ作法) */
+  private cursorAsleep = true;
 
   private lineBrightness = LINE_BASE_BRIGHTNESS;
   /** 縦長ドリー倍率。resize でだけ更新し、カメラリグと線幅の両方がこれを読む */
@@ -370,6 +402,12 @@ export class NarrativeScene implements Exhibit {
     this.group.add(this.lineBatch.object, this.pointBatch.object);
 
     this.camera = ctx.engine.camera;
+    /*
+      ポインタの唯一の情報源(Phase 22)。重力レンズが既に持っている値を借りる ──
+      リスナーも環境ゲートも二重に持たない。ドライバが作られない環境(タッチ /
+      reduced-motion)では z が永遠に 0 なので、下の 2 つの表現は恒等で回る。
+    */
+    this.lens = ctx.engine.postfx.lens;
     // 起動時の 1 回(縦持ちで開かれたらこの時点で既に細い線で立ち上がる)
     this.syncDolly(ctx.engine.portraitDolly);
 
@@ -508,7 +546,10 @@ export class NarrativeScene implements Exhibit {
     const birth = 1 + BIRTH_GAIN * (1 - smoothstep(dimLevel));
     this.pointBatch.setBrightness(POINT_BASE_BRIGHTNESS * overlap * birth);
 
-    // 6) カメラリグ
+    // 6) カーソル近傍の頂点の応答(Phase 22)
+    this.syncCursor();
+
+    // 7) カメラリグ
     this.updateCamera(t, dt);
   }
 
@@ -560,6 +601,49 @@ export class NarrativeScene implements Exhibit {
         p++;
       }
     }
+  }
+
+  /**
+   * 気配のパララックスを 1 フレーム進める(Phase 22)。
+   *
+   * **掴んでいるあいだは 0 へ引く。** ドラッグの振幅はこれの 100 倍あるので
+   * 競合しようがないのだが、掴んだ図がカーソルを微妙に追い続けるのは
+   * 「握っている」感触を濁す。スナップではなく同じ率で抜けていく。
+   */
+  private advanceParallax(dt: number): void {
+    const lens = this.lens;
+    const active = lens !== null && this.dragId === -1 && !this.reduceMotion;
+
+    // UV(左下原点)→ 中心からの符号付き比 −1..1。y は上が正
+    const gain = active && lens !== null ? lens.z : 0;
+    const px = active && lens !== null ? lens.x * 2 - 1 : 0;
+    const py = active && lens !== null ? lens.y * 2 - 1 : 0;
+
+    this.parYaw = expSmooth(this.parYaw, px * PARALLAX_YAW * gain, PARALLAX_RATE, dt);
+    this.parPitch = expSmooth(this.parPitch, -py * PARALLAX_PITCH * gain, PARALLAX_RATE, dt);
+  }
+
+  /**
+   * カーソル近傍の応答をシェーダーへ渡す(Phase 22)。
+   *
+   * レンズの UV(左下原点 0..1)を NDC(−1..1)へ開くだけ。y の向きはどちらも
+   * 上が正なので反転は要らない。強さが消えたら **0 を一度だけ書いて黙る** ──
+   * レンズドライバと同じ作法で、以後はシェーダーの分岐ごと眠る。
+   */
+  private syncCursor(): void {
+    const lens = this.lens;
+    const camera = this.camera;
+    if (lens === null || camera === null) return;
+
+    if (lens.z <= 0.001) {
+      if (!this.cursorAsleep) {
+        this.cursorAsleep = true;
+        this.pointBatch.setCursor(0, 0, 0, camera.aspect);
+      }
+      return;
+    }
+    this.cursorAsleep = false;
+    this.pointBatch.setCursor(lens.x * 2 - 1, lens.y * 2 - 1, lens.z, camera.aspect);
   }
 
   /** extents モーフ本体。base を軸ごとにスケールして work へ書く */
@@ -778,14 +862,15 @@ export class NarrativeScene implements Exhibit {
     */
     this.yaw = expSmooth(this.yaw, this.yawTarget, LOOK_RATE, dt);
     this.pitch = expSmooth(this.pitch, this.pitchTarget, LOOK_RATE, dt);
+    this.advanceParallax(dt);
 
-    if (this.yaw !== 0 || this.pitch !== 0) {
+    if (this.yaw !== 0 || this.pitch !== 0 || this.parYaw !== 0 || this.parPitch !== 0) {
       const radius = Math.sqrt(x * x + y * y + z * z);
       if (radius > 1e-6) {
-        const azimuth = Math.atan2(x, z) + this.yaw;
+        const azimuth = Math.atan2(x, z) + this.yaw + this.parYaw;
         const base = Math.acos(clamp(y / radius, -1, 1));
         const wanted = base + this.pitch;
-        const polar = clamp(wanted, LOOK_POLAR_MIN, LOOK_POLAR_MAX);
+        let polar = clamp(wanted, LOOK_POLAR_MIN, LOOK_POLAR_MAX);
         if (polar !== wanted) {
           /*
             ここへ来るのは、章のカメラ自体が高い(または低い)ところに居て、
@@ -797,6 +882,14 @@ export class NarrativeScene implements Exhibit {
           this.pitch += overflow;
           this.pitchTarget += overflow;
         }
+
+        /*
+          パララックスは**廃棄の後**に足して、もう一度だけクランプする(Phase 22)。
+          前に混ぜると、上の overflow が pitchTarget へ書き戻されるときに
+          ±0.013rad ぶんが「ユーザーが引いた仰角」として恒久的に混入してしまう ──
+          気配は気配のまま、意思の側の状態を汚してはいけない。
+        */
+        polar = clamp(polar + this.parPitch, LOOK_POLAR_MIN, LOOK_POLAR_MAX);
 
         const sinPolar = Math.sin(polar);
         x = radius * sinPolar * Math.sin(azimuth);
