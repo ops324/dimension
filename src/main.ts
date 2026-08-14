@@ -19,7 +19,7 @@ import { Gallery, EXHIBIT_REGISTRY, type ExhibitId } from './core/gallery';
 import { Router, parseRoute } from './core/route';
 import { QualityController } from './core/quality';
 import { createStarfield } from './render/starfield';
-import { NarrativeScene } from './scenes/narrative';
+import { NarrativeScene, ROTATION_PLANES } from './scenes/narrative';
 import { PerspectiveExhibit, type CameraHint } from './scenes/perspectiveExhibit';
 import { CHAPTERS, CHAPTER_DIMS } from './ui/content';
 import { Overlays, buildNarrativeDOM } from './ui/overlays';
@@ -29,6 +29,7 @@ import { createLensDriver } from './ui/lens';
 import { magnetize } from './ui/components/MagneticButton';
 import { createSoundToggle } from './ui/components/SoundToggle';
 import { createAnnouncer } from './ui/components/Announcer';
+import { createRotationReadout } from './ui/components/RotationReadout';
 import { audio } from './audio/engine';
 import { initAudioWiring, type AudioWiring } from './audio/wiring';
 
@@ -281,6 +282,13 @@ function bootNarrative(): void {
   // 4) テキストオーバーレイ(振り付け・HUD・進捗バー・CTA)
   const overlays = new Overlays({ director: scrollDirector, chapters: CHAPTERS, dom, announcer });
 
+  /*
+    回転の計器(Phase 21)。次元の読みの真上へ積む。物語シーンが平面ごとに
+    合算した角度を毎フレーム読むだけで、シーン側には何も足していない。
+    単独展示ブートでは #hud が無いので null になる。
+  */
+  const rotationReadout = createRotationReadout(ROTATION_PLANES);
+
   /**
    * 5) ギャラリーは**初回入場時に初めて構築する**。
    * 4 展示ぶんのバッファ(Hopf 1200×192 線分ほか)を起動時に確保しないことで、
@@ -343,6 +351,7 @@ function bootNarrative(): void {
     starfield.update(dt);
     narrative.update(dt, t);
     overlays.update();
+    rotationReadout?.update(narrative.rotationAngles, narrative.rotationOmegas);
   });
 
   narrative.enter();
@@ -375,6 +384,7 @@ function bootNarrative(): void {
           starfield.update(dt);
           narrative.update(dt, t);
           overlays.update();
+          rotationReadout?.update(narrative.rotationAngles, narrative.rotationOmegas);
           // 次元の鐘も実ループと同じ順序で進める(engine.onFrame の写し)
           wiring.step();
         }

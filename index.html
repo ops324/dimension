@@ -108,15 +108,22 @@
       ギャラリーモードでは同じ場所に「EXHIBIT 02 / 04」が入れ替わりで立つ
       (器は src/ui/components/Hud.ts が足し、どちらを見せるかは CSS が決める)。
       .hud-row は高さ 34px のピルの中で、数字とラベルのベースラインを揃える器。
+
+      .hud-band は画面下辺の**計器の帯**。次元の読みの右へ、回転の計器
+      (RotationReadout.ts が足す)が同じ高さで並ぶ。縦へ積まないのは、
+      章の本文・スクロールの導線・流れる帯がすべて図の左下を通るため ──
+      この帯の高さだけが、どの章でも必ず空いている(実測)。
     -->
     <div id="hud" aria-hidden="true">
-      <div class="hud-dim">
-        <span class="hud-row">
-          <span class="hud-value" id="hud-value">0.00</span>
-          <span class="hud-unit">D</span>
-          <span class="hud-sep"></span>
-          <span class="hud-word" id="hud-word">DIMENSION</span>
-        </span>
+      <div class="hud-band">
+        <div class="hud-dim">
+          <span class="hud-row">
+            <span class="hud-value" id="hud-value">0.00</span>
+            <span class="hud-unit">D</span>
+            <span class="hud-sep"></span>
+            <span class="hud-word" id="hud-word">DIMENSION</span>
+          </span>
+        </div>
       </div>
     </div>
 
