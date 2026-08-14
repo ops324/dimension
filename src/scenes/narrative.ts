@@ -168,6 +168,54 @@ const SCHEDULE: readonly PlaneSpec[] = [
 /** ゲートの立ち上がり幅(dimLevel) */
 const GATE_WIDTH = 0.8;
 
+/* ------------------------------------------------- 回転の計器(Phase 21)
+
+   角度は毎フレーム作られていたのに、どこにも出ていなかった。物語がやっている
+   ことは「軸を足し、その軸を含む平面を回す」ことなので、開いている平面の角度は
+   この作品でいちばん読む価値のある数値になる。
+
+   **枠ではなく平面ごとに合算する**(正しさの要):
+   SCHEDULE は 7 枠あるが平面は 6 枚しかない ── (1,2) が低次元タンブルと等傾ペアの
+   二か所に現れる。同じ平面まわりの回転は可換で、角度は素直に加算される。したがって
+   計器に出すのは枠の位相ではなく **同一平面の位相の和** でなければならない。
+   片方だけを出すと、4D プラトーで (0,3) と厳密に一致するはずの等傾ペアが
+   一致しない数字になり、計器が嘘をつく。
+
+   綴りが二文字なのは 9px の計器だからで、名前を増やしたのではない:
+   パネル(hopf / clifford)は「ω₁ / 平面 (0,1)」という形式的な名前を持つ余白が
+   あるが、計器は一瞥で読む場所で、括弧と読点は記号の雑音になる。同じ平面に
+   短い綴りを 1 つ与えただけで、軸の番号(0..5)との対応は AXIS_LETTERS が唯一の表。
+*/
+const AXIS_LETTERS = 'XYZWVU';
+
+export interface RotationPlane {
+  readonly i: number;
+  readonly j: number;
+  /** 'XW' のような二文字。軸番号 i,j の綴り */
+  readonly label: string;
+}
+
+/** SCHEDULE の枠番号 → ROTATION_PLANES の行番号 */
+const PLANE_SLOT: number[] = [];
+
+/** 計器に出す一意な回転平面(SCHEDULE の登場順 = ゲートが開く順) */
+export const ROTATION_PLANES: readonly RotationPlane[] = (() => {
+  const planes: RotationPlane[] = [];
+  for (const spec of SCHEDULE) {
+    let slot = planes.findIndex((p) => p.i === spec.i && p.j === spec.j);
+    if (slot < 0) {
+      slot = planes.length;
+      planes.push({
+        i: spec.i,
+        j: spec.j,
+        label: AXIS_LETTERS[spec.i] + AXIS_LETTERS[spec.j],
+      });
+    }
+    PLANE_SLOT.push(slot);
+  }
+  return planes;
+})();
+
 /**
  * 停止中の平面の位相を 0 へ巻き戻す速さ。
  *
@@ -282,8 +330,13 @@ export class NarrativeScene implements Exhibit {
 
   /** 平面回転。オブジェクトは使い回して angle だけ書き換える */
   private readonly rots: PlaneRotation[] = SCHEDULE.map((s) => ({ i: s.i, j: s.j, angle: 0 }));
-  /** 積分位相(平面ごと) */
+  /** 積分位相(SCHEDULE の枠ごと) */
   private readonly phases = new Float64Array(SCHEDULE.length);
+
+  /** 平面ごとの合成角(rad)。同一平面の枠を足し合わせたもの ── 計器の唯一の情報源 */
+  private readonly planeAngles = new Float64Array(ROTATION_PLANES.length);
+  /** 同・合成角速度(rad/s)。計器の点灯判定に使う */
+  private readonly planeOmegas = new Float64Array(ROTATION_PLANES.length);
 
   /** engine のカメラ。物語モードでは OrbitControls を使わずここから直接駆動する */
   private camera: THREE.PerspectiveCamera | null = null;
@@ -471,6 +524,19 @@ export class NarrativeScene implements Exhibit {
     return this.director.dimLevel;
   }
 
+  /**
+   * 平面ごとの合成回転角(rad)。行の並びは ROTATION_PLANES と同じ。
+   * **配列は使い回す** ── 読み手は値をその場で使い、参照を溜めてはいけない。
+   */
+  get rotationAngles(): Float64Array {
+    return this.planeAngles;
+  }
+
+  /** 同・合成角速度(rad/s)。0 に近い平面は「止まっている」 */
+  get rotationOmegas(): Float64Array {
+    return this.planeOmegas;
+  }
+
   update(dt: number, t: number): void {
     const poly = this.polytope;
     if (!this.initialized || poly === null) return;
@@ -609,6 +675,11 @@ export class NarrativeScene implements Exhibit {
   private advancePhases(dimLevel: number, dt: number): void {
     const phases = this.phases;
     const rots = this.rots;
+    // 計器用の合算器。平面ごとに毎フレーム積み直す(枠 → 平面は多対一)
+    const planeAngles = this.planeAngles;
+    const planeOmegas = this.planeOmegas;
+    planeAngles.fill(0);
+    planeOmegas.fill(0);
     for (let r = 0; r < SCHEDULE.length; r++) {
       const spec = SCHEDULE[r];
       const open =
@@ -631,6 +702,10 @@ export class NarrativeScene implements Exhibit {
 
       phases[r] = phase;
       rots[r].angle = phase;
+
+      const slot = PLANE_SLOT[r];
+      planeAngles[slot] += phase;
+      planeOmegas[slot] += omega;
     }
   }
 

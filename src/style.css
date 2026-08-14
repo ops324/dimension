@@ -499,11 +499,24 @@ body.fonts-ready #narrative {
   font-family: var(--font-mono);
 }
 
-.hud-dim,
+/* 下辺の計器の帯。次元の読みと回転の計器がここに横並びで乗る(Phase 21) */
+.hud-band {
+  position: absolute;
+  left: var(--hud-inset-l);
+  bottom: var(--hud-inset-b);
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+}
+
 .hud-ex {
   position: absolute;
   left: var(--hud-inset-l);
   bottom: var(--hud-inset-b);
+}
+
+.hud-dim,
+.hud-ex {
   height: var(--pill-h);
   display: flex;
   align-items: center;
@@ -559,12 +572,70 @@ body.fonts-ready #narrative {
   display: none;
 }
 
-body.mode-gallery .hud-dim {
+body.mode-gallery .hud-band {
   display: none;
 }
 
 body.mode-gallery .hud-ex {
   display: flex;
+}
+
+/* ----------------------------------------------------- 回転の計器(Phase 21)
+
+   6 枚の回転平面の角度を、次元の読みの右へ**一行で**並べる。
+
+   縦に積まないのは実測の結果:図の左下は空いているように見えて、章本文の
+   スクロール導線(.ch-hint の 1px レール、x≈91)と、序章・終章に流れる帯
+   (.mq、下辺から 83px)が通っている。高さ --pill-h のこの帯だけが、
+   どの章でも必ず空いている ── 品質チップが右下で同じ帯に乗っているのと同じ理屈。
+
+   寸法は .ch-coord(章の「AXIS 04 / EXTENT ∈ [0,1]^4」)と同じ 9px ── この作品で
+   「計器の読み」を名乗る文字はこの大きさだと決まっている。
+
+   点灯していない平面を消さずに薄く残すのは、出没によるレイアウトの跳ねを
+   避けるためと、「まだ開いていない平面がある」という構造を見せるため。
+   スクロールを戻すと角度が 000.0° へ巻き戻ってから薄くなる。
+*/
+.hud-rot {
+  display: flex;
+  align-items: center;
+  gap: 0.62rem;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  line-height: 1;
+}
+
+.hud-rot-row {
+  display: flex;
+  gap: 0.35em;
+  /* 開いていない平面も場所は残す。濃度だけで「まだ回っていない」を言う */
+  opacity: 0.26;
+  transition: opacity var(--t-fast) linear;
+}
+
+.hud-rot-row.is-lit {
+  opacity: 1;
+}
+
+.hud-rot-plane {
+  color: var(--ink-dim);
+}
+
+.hud-rot-deg {
+  /* 数字は次元の読みと同じ系統の色。等幅数字で桁が動かない */
+  color: rgba(79, 216, 255, 0.62);
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  モバイルでは出さない ── §7.4「UI が図を隠すなら本末転倒」。狭い画面では
+  次元の読みだけで下辺が埋まり、そこへ 6 つ足すのは読める数値が増えるより先に
+  図の余白を削る。ギャラリーは .hud-band ごと引っ込むので指定は要らない。
+*/
+@media (max-width: 768px) {
+  .hud-rot {
+    display: none;
+  }
 }
 
 /* ----------------------------------------------- PERSPECTIVE 展示のオーバーレイ
