@@ -153,6 +153,16 @@ export class AudioEngine {
   private pendingBeat = Number.NaN;
   /** ユーザー操作が一度でもあったか。これが立つまで AudioContext を作らない */
   private gestured = false;
+  /**
+   * 文脈が**本当に走り出した**か(Phase 19b)。`gestured` との差が要点である ──
+   * 操作を捕まえる網を畳んでよいのは「合図が来た」ときではなく「音が出た」ときだけ。
+   *
+   * 以前は最初の合図で畳んでいた。pointerdown / keydown は必ずユーザー活性化を
+   * 伴うので実害は出ていなかったが、**合図と発音は本来別のこと**であり、
+   * 何かの理由で文脈が running にならなかった訪問では、畳んだ網のせいで
+   * 二度と鳴らせなくなる。畳む条件を結果の側へ移して、その芽を摘んでおく。
+   */
+  private started = false;
   private booted = false;
   private suspendTimer = 0;
 
@@ -172,7 +182,10 @@ export class AudioEngine {
    * 「はじめて音が鳴った」に反応したい UI は enabled ではなくこちらを見る。
    */
   get audible(): boolean {
-    return this.on && this.chain !== null;
+    // **文脈が在ることではなく、走っていること**を見る(Phase 19b)。
+    // 文脈は suspended のままでも立っていられる(タブ非表示・許可待ち)ので、
+    // chain の有無で判じるとヘッドフォンの一行が無音の上に出てしまう
+    return this.on && this.ctx !== null && this.ctx.state === 'running';
   }
 
   /** ユーザーが一度でも選んだことがあるか。初回訪問の誘い(パルス)の判定に使う */
@@ -232,6 +245,24 @@ export class AudioEngine {
     // capture で捕まえる: 途中で誰かが伝播を止めても最初の一撃は必ず届く
     document.addEventListener('pointerdown', this.onGesture, { capture: true, passive: true });
     document.addEventListener('keydown', this.onGesture, { capture: true, passive: true });
+    /*
+      **スクロールは網に入れない**(Phase 19b で検討し、実測して見送った)。
+
+      ホイールのスクロールは仕様上ユーザー活性化を起こさない。実測(Chrome /
+      2026-08)でも、600px の本物のホイールスクロールのあと
+      `navigator.userActivation.hasBeenActive` は false のままで、そこから作った
+      AudioContext は **suspended のまま running にならなかった** ──
+      「スクロールを始めたら鳴らす」は、書いても効かない。
+
+      なお **タッチのスクロールは指が触れた時点で pointerdown が出るので既に通り、
+      キーボードのスクロールも keydown で通っている**。効かないのは
+      「デスクトップでホイールだけを回し、一度もクリックしない」経路だけで、
+      その人にも最初のクリックで音が入る。
+
+      検証の注意: `javascript_tool` からの評価はユーザー操作として扱われるので、
+      そこで作った AudioContext は running で生まれる ── **偽陽性になる**。
+      判定はページ自身のコードが作った文脈と `navigator.userActivation` で見ること。
+    */
     document.addEventListener('visibilitychange', this.onVisibility);
 
     this.dispatch();
@@ -274,13 +305,32 @@ export class AudioEngine {
 
   // --- 内部 ------------------------------------------------------------------
 
-  /** 最初のユーザー操作。設定が ON のまま戻ってきた訪問はここで目を覚ます */
+  /**
+   * 最初のユーザー操作。設定が ON のまま戻ってきた訪問はここで目を覚ます。
+   *
+   * **網はここでは畳まない**(Phase 19b)。畳むのは実際に鳴り出した
+   * `confirmStarted()` だけである ── 合図が来たことと音が出たことは別で、
+   * 前者を理由に畳むと、後者に失敗した訪問が二度と鳴らせなくなる。
+   * `engage()` は再入可能(drone / binaural とも build は一度きり、start は
+   * ゲインを鳴らし直すだけ)なので、二度通っても音は積み上がらない。
+   */
   private readonly onGesture = (): void => {
-    if (this.gestured) return;
+    if (this.started) return;
     this.gestured = true;
+    if (this.on) this.engage();
+  };
+
+  /**
+   * 文脈が running になった。ここが**唯一**網を畳んでよい場所である。
+   * 併せて通知を配る ── `audible` が真になるのはこの瞬間なので、
+   * この一手が無いとヘッドフォンの一行が出る合図が UI へ届かない。
+   */
+  private confirmStarted = (): void => {
+    if (this.started || this.ctx === null || this.ctx.state !== 'running') return;
+    this.started = true;
     document.removeEventListener('pointerdown', this.onGesture, true);
     document.removeEventListener('keydown', this.onGesture, true);
-    if (this.on) this.engage();
+    this.dispatch();
   };
 
   /** 見えていないタブで発振器を回し続けない(電池) */
@@ -303,7 +353,10 @@ export class AudioEngine {
     const chain = this.ensureChain();
     if (chain === null || this.ctx === null) return;
 
-    void this.ctx.resume();
+    // 走り出したかは resume の**あと**にしか分からない。拒まれても例外にしない
+    // (拒まれること自体は異常ではないので、握り潰して待つ)
+    void this.ctx.resume().then(this.confirmStarted, () => {});
+    this.confirmStarted(); // 既に running で生まれていた場合(statechange が来ない)
     this.ramp(chain.master.gain, LEVELS.master, FADE_IN_S);
 
     if (this.drone === null) {
@@ -355,6 +408,8 @@ export class AudioEngine {
       // latencyHint 'interactive' = 操作に対する遅れを最小にする(既定だが明示する)
       const ctx = new Ctor({ latencyHint: 'interactive' });
       this.ctx = ctx;
+      // 遅れて許可が下りる経路(ブラウザが後から running へ動かす)を取りこぼさない
+      ctx.addEventListener('statechange', this.confirmStarted);
       // 立ち上がりは無音から。engage() がランプで持ち上げる
       this.chain = buildChain(ctx, 0);
       console.info(`[audio] context ${ctx.sampleRate}Hz / state=${ctx.state}`);
