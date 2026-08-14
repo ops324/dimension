@@ -269,6 +269,30 @@ function resolveMode(m: number, n: number, requested: PerspectiveMode): Perspect
   return requested === 'xray' ? 'slice' : requested;
 }
 
+/**
+ * 代表的な視点(PRESETS)。**表として持つ**のが Phase 19 の要点である ──
+ * 以前はボタン 3 つのベタ書きで、押した先の (m, n, mode, family) が
+ * その場のクロージャの中にしか無かった。表にすると「今の状態がどれかと一致するか」
+ * を後から問い合わせられるようになり、OBSERVER を直接動かしたときにも
+ * 現在地が点灯する(= プリセットが状態の**表示**でもある)。
+ *
+ * mode は「希望」の形で書いてよい ── 一致判定は resolveMode を通してから比べる。
+ */
+interface PerspectivePreset {
+  readonly key: string;
+  readonly label: string;
+  readonly observer: number;
+  readonly target: number;
+  readonly mode: PerspectiveMode;
+  readonly family: PerspectiveFamily;
+}
+
+const PRESETS: readonly PerspectivePreset[] = [
+  { key: 'preset-flatland', label: '2 次元人が立方体を見る', observer: 2, target: 3, mode: 'slice', family: 'cube' },
+  { key: 'preset-tesseract', label: '私たちがテッセラクトを見る', observer: 3, target: 4, mode: 'slice', family: 'cube' },
+  { key: 'preset-fromabove', label: '4 次元の目で見る', observer: 4, target: 3, mode: 'xray', family: 'cube' },
+];
+
 /** 画面幅からインセットの CSS 幅を決める(DOM 枠と scissor 矩形の唯一の情報源) */
 function insetWidthFor(viewportWidth: number): number {
   return clamp(viewportWidth * INSET_WIDTH_RATIO, INSET_MIN_WIDTH, INSET_MAX_WIDTH);
@@ -477,33 +501,41 @@ export class PerspectiveExhibit implements Exhibit {
       panel.setOptionDisabled('mode', 'slice', looksDown);
       panel.setOptionDisabled('mode', 'shadow', looksDown);
       panel.setOptionDisabled('mode', 'xray', !looksDown);
+
+      /*
+        プリセットの現在地(Phase 19)。**プリセットを押したときだけでなく、
+        OBSERVER / TARGET / MODE を直接動かしたときにも**ここを通る ──
+        sync() は「適用後の params を読み直して自分を合わせる」唯一の場所なので、
+        現在地の判定もここに置けば経路によらず一致する(UI 側に規則を二重実装しない、
+        というこのパネルの設計をそのまま延長したもの)。
+
+        比べるのは**解決後**のモードである。表は希望の形で書いてよい代わりに、
+        m > n で xray へ丸められた結果と突き合わせないと、
+        「4 次元の目で見る」は自分自身と一致しなくなる。
+      */
+      for (const item of PRESETS) {
+        const resolved = resolveMode(item.observer, item.target, item.mode);
+        panel.setActive(
+          item.key,
+          p.observer === item.observer &&
+            p.target === item.target &&
+            p.mode === resolved &&
+            p.family === item.family,
+        );
+      }
     };
 
-    const preset = (
-      observer: number,
-      target: number,
-      mode: PerspectiveMode,
-      family: PerspectiveFamily,
-    ): void => {
-      this.params.family = family;
-      this.requestedMode = mode;
-      this.setPerspective(observer, target);
+    const preset = (item: PerspectivePreset): void => {
+      this.params.family = item.family;
+      this.requestedMode = item.mode;
+      this.setPerspective(item.observer, item.target);
       sync();
     };
 
     panel.note('PRESETS / 代表的な視点');
-    panel.button({
-      label: '2 次元人が立方体を見る',
-      onClick: () => preset(2, 3, 'slice', 'cube'),
-    });
-    panel.button({
-      label: '私たちがテッセラクトを見る',
-      onClick: () => preset(3, 4, 'slice', 'cube'),
-    });
-    panel.button({
-      label: '4 次元の目で見る',
-      onClick: () => preset(4, 3, 'xray', 'cube'),
-    });
+    for (const item of PRESETS) {
+      panel.button({ key: item.key, label: item.label, onClick: () => preset(item) });
+    }
 
     panel.divider();
 
@@ -563,7 +595,8 @@ export class PerspectiveExhibit implements Exhibit {
     panel.note(
       '観測者と対象は同じ次元にできない(m ≠ n)。' +
         '低い側から覗くなら断面と影、高い側から見下ろすなら X線俯瞰 ── ' +
-        '選べない組み合わせは灰色になる。',
+        '選べない組み合わせは灰色になる。' +
+        'いま見ている設定が上の代表的な視点と重なると、その行に印が点く。',
     );
 
     sync();

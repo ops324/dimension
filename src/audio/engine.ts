@@ -2,9 +2,15 @@
  * AudioEngine — 音の中枢(Phase 10)。
  *
  * 設計の柱:
- * - **既定は無音**。localStorage に 'on' が書かれるまで AudioContext すら作らない。
- *   自動再生は一切しない ── 鳴るのは「ユーザーが選んだ」かつ「操作が一度あった」
- *   の両方が満たされたときだけ。
+ * - **既定は音がある側**(Phase 19 で反転。それ以前はオプトインだった)。
+ *   localStorage に 'off' が明示されているときだけ黙る ── キーが無い訪問者には、
+ *   作品が意図した状態(音を含む)をそのまま差し出す。
+ *   **それでも自動再生は一切しない**。AudioContext が生まれるのは「設定が ON」かつ
+ *   「ユーザー操作が一度あった」の両方が満たされたときだけで、これは既定を
+ *   反転させても動かない ── 放置された画面から音が出ることはないし、
+ *   ブラウザの自動再生ポリシーと戦う実装もどこにも無い。
+ * - そのため `enabled`(設定)と `audible`(実際に鳴っているか)は**別の量**である。
+ *   初回訪問の最初の操作までは enabled=true / audible=false という状態が続く。
  * - すべての音は同じチェーンを通る:
  *     カテゴリ gain(ambient / sfx / bell)→ master → DynamicsCompressor → 出力
  *   末端のコンプレッサは音作りではなく**安全装置**(-12dB / ratio 12)。
@@ -58,7 +64,14 @@ export interface AudioChain {
 
 /** `dimension:sound` の detail。UI(SoundToggle)はこれだけを見る */
 export interface SoundDetail {
+  /** 設定として音を許しているか(チップの ●/◌ はこれを描く) */
   readonly enabled: boolean;
+  /**
+   * 実際に鳴っているか。**enabled とは別の量** ── 既定 ON の初回訪問では、
+   * 最初のユーザー操作までこれが false のままになる(自動再生をしないため)。
+   * 「音が立ち上がった瞬間」に何かを出したい UI はこちらを見る。
+   */
+  readonly audible: boolean;
 }
 
 /**
@@ -153,6 +166,15 @@ export class AudioEngine {
     return this.on;
   }
 
+  /**
+   * いま実際に音が出ているか。`enabled` との差は「最初の操作があったか」だけで、
+   * 既定 ON になった以上この 2 つは初回訪問で必ず食い違う ──
+   * 「はじめて音が鳴った」に反応したい UI は enabled ではなくこちらを見る。
+   */
+  get audible(): boolean {
+    return this.on && this.chain !== null;
+  }
+
   /** ユーザーが一度でも選んだことがあるか。初回訪問の誘い(パルス)の判定に使う */
   get hasPreference(): boolean {
     return this.stored !== null;
@@ -195,7 +217,10 @@ export class AudioEngine {
     this.booted = true;
 
     this.stored = readPreference();
-    this.on = this.stored === 'on';
+    // **既定は ON**。'off' と明示的に書かれているときだけ黙る ── キーが無い
+    // (= まだ一度も選んでいない)訪問者は、音のある側から始める。
+    // `=== 'on'` ではなく `!== 'off'` である点がこの一行の全部である。
+    this.on = this.stored !== 'off';
 
     if (!this.available) {
       // 音を出せない環境。設定だけは UI へ配って、以後は何もしない
@@ -295,6 +320,11 @@ export class AudioEngine {
       this.binaural.setBeat(this.pendingBeat);
     }
     this.binaural.start(AMBIENT_FADE_S);
+
+    // 「鳴りはじめた」の通知。既定 ON では設定の変化を伴わずにここへ来る
+    // (最初の操作で目を覚ますだけ)ので、この一手が無いと UI は
+    // 音が立ち上がった瞬間を知る手段を持たない
+    this.dispatch();
   }
 
   /** 黙らせる。ドローンは自分の 2.5 秒で引き、そのあとコンテキストを眠らせる */
@@ -347,7 +377,7 @@ export class AudioEngine {
 
   private dispatch(): void {
     if (typeof window === 'undefined') return;
-    const detail: SoundDetail = { enabled: this.on };
+    const detail: SoundDetail = { enabled: this.on, audible: this.audible };
     window.dispatchEvent(new CustomEvent<SoundDetail>('dimension:sound', { detail }));
   }
 }

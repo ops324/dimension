@@ -1392,7 +1392,10 @@ body.mode-gallery #perspective-caption {
   isolation: isolate;
   overflow: hidden;
   width: 100%;
-  padding: 0.6rem 0.85rem;
+  /* 右の余白は**常に**空けておく(Phase 19)。現在地の輪はここに立つので、
+     点灯した瞬間に padding が変わると行が折り返して文字が動いてしまう ──
+     文字は左揃えなので、印の無いあいだこの余白は目に見えない */
+  padding: 0.6rem 2rem 0.6rem 0.85rem;
   border: 1px solid var(--hairline-strong);
   border-radius: 9px;
   background: transparent;
@@ -1406,6 +1409,7 @@ body.mode-gallery #perspective-caption {
   cursor: pointer;
   transition:
     border-color var(--t-med) var(--ease-out-quint),
+    background-color var(--t-med) var(--ease-out-quint),
     color var(--t-med) var(--ease-out-quint);
 }
 
@@ -1434,6 +1438,37 @@ body.mode-gallery #perspective-caption {
 .pn-button:hover::before,
 .pn-button:focus-visible::before {
   transform: scaleX(1);
+}
+
+/*
+  現在地(Phase 19)。プリセットは押す物であると同時に、**今どこにいるか**の
+  表示でもある ── OBSERVER / TARGET / MODE を直接動かした人にとって、
+  自分がどの代表的な視点の上に乗ったのかを知る手がかりはここにしかない。
+
+  色は展示のアクセント(--dw-accent。視点次元セレクタでは violet)を借りるだけで、
+  新しい色は発明しない。掃きの ::before は hover のまま残す ── 現在地を
+  「ホバーしっぱなし」の見た目で表すと、その行だけホバーが効かなくなって見える。
+
+  そして**色だけに頼らない**。右端に小さな輪を置き、色の判別によらず
+  印が付いていることが形で分かるようにする(支援技術には PanelButton が立てる
+  aria-current が届くので、この輪は視覚のためだけのもの)。
+*/
+.pn-button.is-current {
+  border-color: var(--dw-accent-line);
+  background: var(--dw-accent-soft);
+  color: var(--ink);
+}
+
+.pn-button.is-current::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: 0.85rem;
+  width: 6px;
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 50%;
+  background: var(--dw-accent);
 }
 
 .pn-divider {

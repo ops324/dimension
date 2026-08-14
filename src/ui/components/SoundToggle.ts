@@ -5,13 +5,15 @@
  * (品質のメニューは上へ開くので、下に置けば決して重ならない)。
  *
  * 見せているのは 2 つだけ:
- *   ◌ SOUND … 消えている(既定)
- *   ● SOUND … 鳴っている + 3 本のバーがゆっくり上下する
+ *   ◌ SOUND … 消えている
+ *   ● SOUND … 鳴っている(既定)+ 3 本のバーがゆっくり上下する
  * バーは CSS アニメーションで、**ON のときだけ**動く ── OFF のあいだ、
  * この部品は 1 フレームも仕事をしない。
  *
  * 初回訪問だけ、プリローダが退いたあとに 2 回だけ小さく脈打つ。
- * 誘いであって催促ではないので、一度でも設定を選んだ人には二度と出ない。
+ * Phase 19 で既定が ON になり、この脈の意味は「音を入れませんか」から
+ * **「音はここで切れる」**へ変わった ── 誘いではなく出口の提示なので、
+ * 既定を反転させたあとのほうがむしろ要る。一度でも自分で選んだ人には出ない。
  *
  * Phase 12b: **はじめて音を入れたときだけ**、チップの隣に一行だけ言葉を置く。
  * この空間の環境音には左右の耳でわずかに高さの違う正弦が含まれていて、
@@ -153,10 +155,12 @@ export class SoundToggle implements Component {
 
   private readonly onSoundEvent = (event: Event): void => {
     const detail = (event as CustomEvent<SoundDetail>).detail;
-    const on = detail?.enabled === true;
-    this.paint(on);
-    // 「はじめて音を入れた」瞬間 ── 音が立ち上がるのと同じ合図で一行を置く
-    if (on) this.showHint();
+    this.paint(detail?.enabled === true);
+    // 一行を出すのは **音が実際に立ち上がった**ときだけ(enabled ではなく audible)。
+    // 既定 ON になった以上、設定を見ていると初回訪問の「まだ鳴っていない」時間に
+    // ヘッドフォンの話を始めてしまう ── 6 秒で消える一行なので、鳴る前に出せば
+    // 鳴るころには消えている。
+    if (detail?.audible === true) this.showHint();
   };
 
   private paint(on: boolean): void {

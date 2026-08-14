@@ -69,9 +69,10 @@ const preloader = isStandalone
 preloader?.mount(document.body);
 
 /**
- * 音(Phase 10)。**既定は無音**で、ここでするのは「最初のユーザー操作を
- * 捕まえる網を張る」ことだけ ── AudioContext は、設定が ON で、かつ操作が
- * 一度あったときに初めて生まれる(自動再生は決してしない)。
+ * 音(Phase 10、既定は Phase 19 で ON へ反転)。ここでするのは
+ * 「最初のユーザー操作を捕まえる網を張る」ことだけ ── AudioContext は、
+ * 設定が ON で、かつ操作が一度あったときに初めて生まれる。
+ * **既定が ON でも自動再生はしない**という不変条件はここで守られている。
  */
 audio.init();
 
