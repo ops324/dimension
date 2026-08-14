@@ -15,6 +15,16 @@ export interface PointBatchOptions {
   pixelRatio?: number;
 }
 
+/**
+ * カーソル近傍の応答半径(NDC、**画面高を基準**にした単位)。
+ * 重力レンズの σ 0.09(短辺基準 UV)と同じ桁 ── 同じ「質量」が空間を歪め、
+ * 頂点を明るくしていると読めるように揃えてある。
+ */
+const CURSOR_RADIUS = 0.12;
+/** 応答のピーク倍率。輝度は ×1.35、大きさは ×1.15 まで */
+const CURSOR_BRIGHT_GAIN = 0.35;
+const CURSOR_SIZE_GAIN = 0.15;
+
 const VERTEX_SHADER = /* glsl */ `
 attribute float aSize;
 attribute float aBright;
@@ -22,6 +32,18 @@ attribute float aBright;
 uniform float uPixelRatio;
 uniform float uScale;
 uniform float uMaxSize;
+
+/*
+  カーソル近傍の応答(Phase 22)。xy は NDC のカーソル位置、z は強さ(0..1)。
+
+  頂点シェーダーで測るのは、CPU 側で 3264 点を NDC へ変換し直さないため ──
+  gl_Position はもう計算されているので、必要なのは除算 1 回と指数 1 回だけ。
+  強さが 0 のときは g も 0 になり、両方の係数が厳密に 1 倍へ戻る(polytope 展示は
+  この uniform を一度も書かないので、恒等のまま回り続ける)。
+*/
+uniform vec3 uCursor;
+/** 画面アスペクト(w/h)。掛けないと応答域が楕円になる */
+uniform float uCursorAspect;
 
 varying float vBright;
 
@@ -33,6 +55,16 @@ void main() {
 
   // カメラ距離に対するサイズ減衰(星と違い瞬きはしない)
   float size = aSize * uScale / max(-mv.z, 0.1);
+
+  if (uCursor.z > 0.001) {
+    // w はカメラ面上/背後で 0 に近づく。割る前に必ず床を入れる
+    vec2 ndc = gl_Position.xy / max(abs(gl_Position.w), 1e-4);
+    vec2 d = (ndc - uCursor.xy) * vec2(uCursorAspect, 1.0);
+    float g = uCursor.z * exp(-dot(d, d) / (2.0 * ${CURSOR_RADIUS.toFixed(4)} * ${CURSOR_RADIUS.toFixed(4)}));
+    vBright *= 1.0 + ${CURSOR_BRIGHT_GAIN.toFixed(3)} * g;
+    size *= 1.0 + ${CURSOR_SIZE_GAIN.toFixed(3)} * g;
+  }
+
   gl_PointSize = min(size, uMaxSize) * uPixelRatio;
 }
 `;
@@ -119,6 +151,9 @@ export class PointBatch {
         uScale: { value: options.scale ?? 92 },
         uMaxSize: { value: options.maxSize ?? 56 },
         uPixelRatio: { value: pixelRatio },
+        // 既定は「カーソルなし」。書かないかぎり応答は恒等(Phase 22)
+        uCursor: { value: new THREE.Vector3(0, 0, 0) },
+        uCursorAspect: { value: 1 },
       },
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
@@ -160,6 +195,16 @@ export class PointBatch {
 
   setColor(color: THREE.Color): void {
     (this.material.uniforms.uColor.value as THREE.Color).copy(color);
+  }
+
+  /**
+   * カーソル近傍の応答(Phase 22)。nx/ny は NDC(−1..1、上が +y)、amount は 0..1。
+   * amount = 0 でシェーダーの節ごとスキップされる ── 呼ばない展示は何も払わない。
+   */
+  setCursor(nx: number, ny: number, amount: number, aspect: number): void {
+    const v = this.material.uniforms.uCursor.value as THREE.Vector3;
+    v.set(nx, ny, amount > 0 ? (amount < 1 ? amount : 1) : 0);
+    this.material.uniforms.uCursorAspect.value = aspect > 0 ? aspect : 1;
   }
 
   dispose(): void {
