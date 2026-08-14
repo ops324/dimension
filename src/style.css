@@ -35,9 +35,9 @@
   --glass: rgba(10, 12, 24, 0.55);
 
   /* タイポグラフィ(EN見出し / 日本語本文 / HUD数値) */
-  --font-display: 'Unbounded', 'Zen Kaku Gothic New', system-ui, sans-serif;
-  --font-body: 'Zen Kaku Gothic New', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN',
-    'Noto Sans JP', sans-serif;
+  --font-display: 'Unbounded', 'Murecho', system-ui, sans-serif;
+  --font-body: 'Murecho', system-ui, -apple-system, 'Hiragino Kaku Gothic ProN', 'Noto Sans JP',
+    sans-serif;
   --font-mono: 'Space Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   /* ディスプレイ英字が占めてよい画面幅。.ch-en のフォントサイズ算出に使う */
