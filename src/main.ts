@@ -14,7 +14,8 @@ import { Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { Engine } from './core/engine';
-import { ScrollDirector } from './core/scrollDirector';
+import { ScrollDirector, SMOOTH_RATE_GLIDING } from './core/scrollDirector';
+import { createSmoothScroll } from './core/smoothScroll';
 import { Gallery, EXHIBIT_REGISTRY, type ExhibitId } from './core/gallery';
 import { Router, parseRoute } from './core/route';
 import { QualityController } from './core/quality';
@@ -263,6 +264,16 @@ function bootNarrative(): void {
   // 2) スクロール → (章, 章内進捗, dimLevel)。スクロールリスナーは張らない
   const scrollDirector = new ScrollDirector(dom.sections, CHAPTER_DIMS);
 
+  /*
+    2b) スクロールの滑走(Phase 24)。ホイールとキーの離散的な飛びを引き受け、
+    毎フレーム scrollY 自体を平滑化して書き戻す。**文字も図形も同じ 1 つの値**
+    から動くので、DOM と WebGL がずれることが構造的に起きない。
+    タッチ・スクロールバー・reduced-motion では何もしない(ネイティブのまま)。
+  */
+  const smoothScroll = createSmoothScroll();
+  // 前段で滑らかになったぶん、dimLevel 側のノッチ隠しは緩める(遅れの二重取りを避ける)
+  if (smoothScroll.enabled) scrollDirector.setSmoothRate(SMOOTH_RATE_GLIDING);
+
   // 3) レンダリング
   const narrative = new NarrativeScene(scrollDirector);
   narrative.init({ engine });
@@ -338,6 +349,7 @@ function bootNarrative(): void {
   engine.onResize(() => {
     overlays.remeasure();
     scrollDirector.remeasure();
+    smoothScroll.remeasure();
   });
 
   // モードで駆動対象を丸ごと切り替える。ギャラリー中は scrollDirector も
@@ -347,6 +359,8 @@ function bootNarrative(): void {
       gallery.update(dt, t);
       return;
     }
+    // scrollY を書くのは **director が読む前**。同じフレームで文字と図が一致する
+    smoothScroll.update(dt);
     scrollDirector.update(dt);
     starfield.update(dt);
     narrative.update(dt, t);
@@ -380,6 +394,7 @@ function bootNarrative(): void {
         if (inGallery && gallery !== null) {
           gallery.update(dt, t);
         } else {
+          smoothScroll.update(dt);
           scrollDirector.update(dt);
           starfield.update(dt);
           narrative.update(dt, t);
@@ -400,6 +415,7 @@ function bootNarrative(): void {
       engine,
       narrative,
       scrollDirector,
+      smoothScroll,
       overlays,
       quality,
       /** GradePass の on/off(グレイン・ビネット・ディザの before/after 比較用) */
@@ -418,8 +434,15 @@ function bootNarrative(): void {
        */
       enterGallery: (): void => ensureGallery().requestEnter(),
       exitGallery: (): void => router.leave(),
-      /** 指定スクロール位置へ即座に飛ぶ(html { scroll-behavior: auto }) */
-      setScroll: (y: number): void => window.scrollTo(0, y),
+      /**
+       * 指定スクロール位置へ即座に飛ぶ(html { scroll-behavior: auto })。
+       * 滑走層へ同期させるのは検証を決定論にするため ── 同期しないと
+       * 次のフレームで「外部スクロール」として検出されるまでの 1 枚が古い値になる。
+       */
+      setScroll: (y: number): void => {
+        window.scrollTo(0, y);
+        smoothScroll.sync();
+      },
       /** 合成フレームを steps 回進めて 1 枚描画する。戻り値は到達した dimLevel */
       renderOnce,
       audio: devAudioHooks(wiring),
