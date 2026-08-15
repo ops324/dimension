@@ -15,8 +15,18 @@ import { clamp01, expSmooth, smoothstep } from '../math/ease';
 
 /** 章の前半 40% で次元を伸ばし、残り 60% は読書のためのプラトーにする */
 const MORPH_FRACTION = 0.4;
-/** dimLevel の指数平滑化レート(プラン2節: rate≈6) */
-const SMOOTH_RATE = 6;
+/**
+ * dimLevel の指数平滑化レート(プラン2節: rate≈6)。
+ * この 6 は **ホイールの離散的なノッチを隠すため**の値だった。
+ */
+export const SMOOTH_RATE_NATIVE = 6;
+/**
+ * スクロール位置そのものが滑走しているとき(`smoothScroll` 有効時)のレート。
+ * ノッチ隠しの役目は前段へ移ったので、ここは緩める ── 二段重ねの遅れは
+ * 時定数の和(1/8 + 1/6 = 292ms)になり、図が指からちぎれて見える。
+ * 14 にすると 125 + 71 = 196ms で、Phase 23 までの体感(167ms)にほぼ揃う。
+ */
+export const SMOOTH_RATE_GLIDING = 14;
 /** 平滑値をターゲットへスナップする閾値 */
 const SNAP_EPSILON = 1e-4;
 
@@ -43,6 +53,7 @@ export class ScrollDirector {
   private smoothedDim = 0;
   private targetDim = 0;
   private progress = 0;
+  private smoothRate = SMOOTH_RATE_NATIVE;
 
   /** 初回 update() でのレイアウト再計測 + 平滑値のスナップに使う */
   private settled = false;
@@ -70,6 +81,14 @@ export class ScrollDirector {
   /** 現在ピン留めされている章のインデックス */
   get chapterIndex(): number {
     return this.activeIndex;
+  }
+
+  /**
+   * dimLevel の平滑化レートの差し替え(`SMOOTH_RATE_NATIVE` / `SMOOTH_RATE_GLIDING`)。
+   * 前段でスクロール位置が平滑化されているかどうかで、必要な量が変わる。
+   */
+  setSmoothRate(rate: number): void {
+    this.smoothRate = rate > 0 ? rate : SMOOTH_RATE_NATIVE;
   }
 
   /** 現在の章の中での進捗 ∈ [0,1] */
@@ -153,7 +172,7 @@ export class ScrollDirector {
     if (first) {
       this.smoothedDim = this.targetDim;
     } else {
-      this.smoothedDim = expSmooth(this.smoothedDim, this.targetDim, SMOOTH_RATE, dt);
+      this.smoothedDim = expSmooth(this.smoothedDim, this.targetDim, this.smoothRate, dt);
       if (Math.abs(this.targetDim - this.smoothedDim) < SNAP_EPSILON) {
         this.smoothedDim = this.targetDim;
       }
