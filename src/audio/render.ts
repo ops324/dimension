@@ -128,7 +128,7 @@ export async function render(name: string): Promise<Measurement> {
 
   if (name.startsWith('bell')) {
     const k = Number(name.slice(4));
-    return { name, ...stats, hz: dominantHz(buffer, 120, 1400), expectedHz: 98 * (k + 1) };
+    return { name, ...stats, hz: dominantHz(buffer, 120, 1400), expectedHz: 99 * (k + 1) };
   }
   return { name, ...stats };
 }
@@ -222,7 +222,7 @@ function measure(
  *
  * FFT を持ち込まないための最小の道具。1Hz 刻みで候補周波数の複素振幅を出し、
  * いちばん強いものを返す。減衰する正弦のスペクトルは裾を引くが、山の位置は
- * 動かないので「鐘の基音が 196Hz か」を確かめるにはこれで足りる。
+ * 動かないので「鐘の基音が 198Hz か」を確かめるにはこれで足りる。
  */
 function dominantHz(buffer: AudioBuffer, from: number, to: number): number {
   const rate = buffer.sampleRate;

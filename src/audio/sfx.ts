@@ -210,18 +210,22 @@ export function buildModeShift(target: SfxTarget, t0: number, inward = true): nu
 /**
  * 次元の鐘。
  *
- * 基音 f0 = 98Hz(G2)を置き、k 次元は **(k+1) 倍音**を鳴らす:
- *     1D→196  2D→294  3D→392  4D→490  5D→588  6D→686 (Hz)
+ * 基音 f0 = 99Hz を置き、k 次元は **(k+1) 倍音**を鳴らす:
+ *     1D→198  2D→297  3D→396  4D→495  5D→594  6D→693 (Hz)
  * 次元がひとつ増えるということは、同じ弦の上の次の節へ移ることである ──
  * 倍音列そのものが「次元の階段」になっている。上がるときも下りるときも鳴らすので、
  * 下りは低い倍音が返ってくる。
+ *
+ * 基音が 99Hz なのは、この倍音列が**ソルフェジオ音階と重なる**からである
+ * (396 / 495 / 594 / 693 = 解放・つながり・関係・直観)。私たちの 3D が 396Hz。
+ * 98Hz からの隔たりはわずか 1% ── 倍音列という構造は何ひとつ変えていない。
  *
  * 音色は 1 : 2.76 : 5.40 の非調和倍音(教会の鐘の古典的な比)で、上ほど速く消える。
  * 頭に 8ms の雑音の爪を足すと、金属ではなくガラスの鐘になる。
  */
 export function buildBell(target: SfxTarget, t0: number, k: number): number {
   const { ctx } = target;
-  const f = 98 * (k + 1);
+  const f = 99 * (k + 1);
   const peak = 0.3;
 
   const fundamental = sine(ctx, target.bell, t0, f, peak, 0.002, 1.8);
