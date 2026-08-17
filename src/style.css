@@ -1090,6 +1090,13 @@ body.mode-gallery #perspective-caption {
   background: linear-gradient(180deg, var(--cyan), var(--violet));
 }
 
+/* 「PARAMETERS」。折り返させない ── ここが 2 行になると畳んだシートの高さが
+   変わり、min-height で固定したつまみ帯の契約が黙って無効になる(Phase 26) */
+.panel-kicker-text {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
 .panel-rule {
   flex: 1 1 auto;
   height: 1px;
@@ -1106,8 +1113,17 @@ body.mode-gallery #perspective-caption {
   color: var(--ink);
 }
 
-/* グラブハンドルはモバイルのボトムシートでのみ現れる */
-.panel-grab {
+/*
+  グラブハンドルと、その手がかり(日本語の一行 + シェブロン)は
+  モバイルのボトムシートでのみ現れる。側面ドックは畳まれないので、
+  「開く」と言う字も方向を指す記号も、そこでは嘘になる。
+
+  **この 3 つが下のメディアクエリより前にあることが効いている。**
+  後ろに置くと、同じ詳細度(0,1,0)の後出しに負けてどこでも消える。
+*/
+.panel-grab,
+.panel-hint,
+.panel-chevron {
   display: none;
 }
 
@@ -3223,9 +3239,78 @@ html {
     border-bottom: 0;
   }
 
+  /*
+    つまみ帯(Phase 26)。
+
+    展示名を伏せるとヘッダは 1 行になり、自然高は 44px まで落ちる ──
+    タップ標的としては足りるが、指で掃く帯としては細い。min-height で
+    **57px に固定する**。この値は偶然ではなく、CSS の 6 か所が持つ
+    `var(--sheet-h, 3.5rem)` のフォールバック(56px)と `.panel-body` の
+    `3.6rem` に**いちばん近い高さ**である ── 48px を選ぶとあの結合定数を
+    8 本動かすことになり、計器の柱・カメラのセーフエリア・キャプション・
+    SPEC の実測表がまとめて揺れる。作品が 9px 広く見えることは、
+    それに見合わない。
+
+    min-height は `.panel-head` に付ける。`.panel-grab` 側に付けると
+    絶対配置の包含ブロックを越えて伸び、開いたとき `.panel-body` の
+    上端マスク域を覆って最初のスライダーのタッチを飲む。
+    justify-content は余りを上下へ散らすため(既定の flex-start だと
+    kicker の下に 13px の空白が溜まる)。
+  */
   .panel-head {
     position: relative;
     padding-top: 1.25rem;
+    min-height: calc(3.5rem + 1px);
+    justify-content: center;
+  }
+
+  /* 展示名はここでは伏せる ── タブ帯のアクティブタブと #gallery-head の
+     .gh-en に既に出ており、モバイルでは 3 つが同時に見える。この h3 は
+     どこからも aria で参照されていない(tabpanel の名前はタブ側が持つ)ので、
+     伏せても支援技術から情報は 1 つも失われない。
+     デスクトップでも消したくなったら、この 1 行をクエリの外へ出すだけ。 */
+  .panel-title {
+    display: none;
+  }
+
+  /* 空いた 1 行を手がかりに使う。9px mono / letter-spacing 0.28em の
+     kicker の字組みを継いではいけない ── 9px の日本語に 0.28em の
+     トラッキングは読めない。同種の一行ヒント .s-hint の字組みを借りる */
+  .panel-hint {
+    display: block;
+    flex: 0 0 auto;
+    font-family: var(--font-body);
+    font-size: 11px;
+    line-height: 1;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  /*
+    開閉の方向を指す記号。**グリフではなく border で描く** ── kicker は
+    font-mono(Space Mono)で、∧(U+2227) や ⌃(U+2303) の収録が保証されない。
+    豆腐が出るのは legibility を担う唯一の要素の上になる。
+    border 幅は明示する: box-sizing: border-box の下で既定の medium(3px) だと
+    7px の箱がほぼ塗り潰される。
+  */
+  .panel-chevron {
+    display: block;
+    flex: 0 0 auto;
+    width: 7px;
+    height: 7px;
+    border-left: 1.5px solid var(--ink-dim);
+    border-top: 1.5px solid var(--ink-dim);
+    transform: rotate(45deg);
+    transition: transform var(--t-med) var(--ease-out-quint);
+  }
+
+  /* 開いたら記号は下を向き、「操作する」は役目を終える */
+  #gallery-panel:not(.is-collapsed) .panel-chevron {
+    transform: rotate(225deg);
+  }
+
+  #gallery-panel:not(.is-collapsed) .panel-hint {
+    display: none;
   }
 
   .panel-grab {
@@ -3238,8 +3323,23 @@ html {
     border: 0;
     background: transparent;
     cursor: pointer;
+    /*
+      掃きをこちらで受け取る宣言(Phase 26)。無いと iOS Safari が縦ドラッグを
+      スクロール / オーバースクロールと解釈し、pointercancel でジェスチャが切れる。
+      効く範囲は**つまみバーではなくヘッダ全域**(inset: 0)である。
+    */
+    touch-action: none;
   }
 
+  /* .panel の overflow: hidden が既定の outline-offset: 3px を三辺で切る。
+     この操作子を見つけられるようにするフェーズで、キーボードの現在地が
+     切れているのは筋が通らないので内側へ回す */
+  .panel-grab:focus-visible {
+    outline-offset: -3px;
+  }
+
+  /* 明度を上げる(Phase 26)。0.28 はパネルの合成背景に対して 2.19:1 で
+     WCAG 1.4.11(3:1)に届いておらず、「掴めるもの」に見えていなかった */
   .panel-grab-bar {
     position: absolute;
     top: 0.5rem;
@@ -3248,7 +3348,7 @@ html {
     width: 2.4rem;
     height: 3px;
     border-radius: 999px;
-    background: rgba(232, 236, 251, 0.28);
+    background: rgba(232, 236, 251, 0.42);
   }
 
   .panel-body {
@@ -3591,6 +3691,15 @@ html {
   #gallery-drawer,
   .dw-scrim,
   .panel-body,
+  /* 遷移を切るだけ ── 回転は即時になる。同じブロックの .sp-line-in などを
+     真似て transform: none を書くと、シェブロンが両状態で上を向いたまま
+     固定され、**唯一の状態表示が死ぬ** */
+  .panel-chevron,
+  /* Phase 26 で気づいた既存の抜け: #quality / #sound / #immersive /
+     #perspective-caption は下に並んでいるが .hud-ex が無かった。#hud の
+     transition: none は継承しないので、reduce-motion でも展示カウンタだけが
+     シートの開閉に合わせて滑っていた。掃きで開閉の頻度が上がるので塞ぐ */
+  .hud-ex,
   .gal-tab,
   .gal-tab-en,
   .gal-tab-idx,
