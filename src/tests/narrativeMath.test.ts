@@ -14,6 +14,10 @@ import {
   ORBIT_GATE,
   ORBIT_GATE_WIDTH,
   orbitAmount,
+  SCAFFOLD_GATE,
+  SCAFFOLD_GATE_WIDTH,
+  scaffoldAmount,
+  scaffoldDensityFade,
   LENS_GATE,
   LENS_GATE_WIDTH,
   lensAmount,
@@ -288,5 +292,31 @@ describe('重力場のゲート', () => {
       expect(a).toBeGreaterThanOrEqual(prev - 1e-12);
       prev = a;
     }
+  });
+});
+
+describe('足場のゲートと密度減光', () => {
+  it('0 次元・1 次元では出ない(点を線に重ねても何も言わない)', () => {
+    for (const d of [0, 1, 1.5, SCAFFOLD_GATE]) expect(scaffoldAmount(d)).toBe(0);
+  });
+
+  it('第二章から開き切る', () => {
+    expect(scaffoldAmount(SCAFFOLD_GATE + SCAFFOLD_GATE_WIDTH)).toBe(1);
+    expect(scaffoldAmount(4)).toBe(1);
+    expect(scaffoldAmount(6)).toBe(1);
+  });
+
+  it('密度減光は次元とともに単調に薄くなる', () => {
+    expect(scaffoldDensityFade(3.5)).toBe(1);
+    expect(scaffoldDensityFade(3)).toBe(1);
+    let prev = 2;
+    for (let d = 3.5; d <= 6; d += 0.1) {
+      const f = scaffoldDensityFade(d);
+      expect(f).toBeLessThanOrEqual(prev + 1e-12);
+      expect(f).toBeGreaterThan(0);
+      prev = f;
+    }
+    // 6 次元では 1/3 以下まで落ちる(192 本に 192 本が重なる場所)
+    expect(scaffoldDensityFade(6)).toBeLessThan(0.34);
   });
 });

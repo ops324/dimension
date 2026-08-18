@@ -16,6 +16,8 @@ import {
   fovForDollyZoom,
   lensAmount,
   orbitAmount,
+  scaffoldAmount,
+  scaffoldDensityFade,
   vertigoScale,
 } from './narrativeMath';
 
@@ -446,6 +448,22 @@ const ORBIT_SEGMENTS = ORBIT_VERTICES.length * ORBIT_SAMPLES;
  */
 const ORBIT_GAIN = 0.09;
 
+/* --------------------------------------------------------------- 足場(Phase 31)
+
+   残響が「時間の過去」なら、足場は **「次元の過去」**。つねに `dim − 1` の姿を、
+   同じ姿勢・同じ回転のまま薄く置き去りにする。プラトーで止まっても消えないのが
+   要点で、第四章に立ち止まる読者はテッセラクトの内側に**さっきまで居た立方体**を
+   見つづける。
+
+   ジオメトリは残響と同じ粗い細分(4)。**位相は現在値**なので履歴バッファは要らない ──
+   変えるのは extent の引数を 1 だけ引くことだけである。
+*/
+
+/** 足場の輝度(図の見かけを 1 として)。残響のいちばん薄い枚(0.04)より上に置く */
+const SCAFFOLD_GAIN = 0.075;
+/** 192 × 4 = 768 線分 */
+const SCAFFOLD_SEGMENTS = GHOST_SEGMENTS;
+
 /** 深度(投影後 z、正規化済み ∈[-1,1])→ LUT の行インデックス */
 function lutIndexOf(depth: number, scale: number): number {
   const t = (depth * scale + 1) * 0.5 * LUT_MAX;
@@ -538,6 +556,16 @@ export class NarrativeScene implements Exhibit {
   }));
   private orbitsDrawn = false;
 
+  // --- 足場(Phase 31)----------------------------------------------------------
+  private scaffoldBatch: LineBatch | null = null;
+  private scaffoldWork!: Float64Array;
+  private scaffoldProj!: Float32Array;
+  /** dim − 1 の伸長率。主図形の extents とは別に持つ */
+  private readonly scaffoldExtents = new Float64Array(N);
+  private scaffoldDrawn = false;
+  /** 検証用の隔離スイッチ(DEV のヘッドレス比較でだけ倒す)。既定 true */
+  scaffoldEnabled = true;
+
   /**
    * 波面の表(Phase 28)。u = s/SUBDIV における混色比と、芯へ戻す明るさの倍率。
    * 各 17 要素 = SUBDIV+1 で、内側ループは添字参照だけになる。
@@ -620,6 +648,9 @@ export class NarrativeScene implements Exhibit {
     this.ghostWork = new Float64Array(GHOST_SUB_POINTS * N);
     this.ghostProj = new Float32Array(GHOST_SUB_POINTS * 3);
 
+    this.scaffoldWork = new Float64Array(GHOST_SUB_POINTS * N);
+    this.scaffoldProj = new Float32Array(GHOST_SUB_POINTS * 3);
+
     this.orbitWork = new Float64Array(ORBIT_VERTICES.length * N);
     this.orbitProj = new Float32Array(ORBIT_VERTICES.length * 3);
     this.orbitRing = new Float32Array(ORBIT_SEGMENTS * 3);
@@ -668,7 +699,10 @@ export class NarrativeScene implements Exhibit {
     // 軌道環も同じマテリアルに相乗りする(Phase 27)。増えるのはドローコール 1 つだけ。
     // 主図形より**先に** add = 輪は図の下に敷かれる(残響と同じ順序)
     this.orbitBatch = new LineBatch(ORBIT_SEGMENTS, this.material);
+    // 足場は最も下(いちばん過去)に敷く
+    this.scaffoldBatch = new LineBatch(SCAFFOLD_SEGMENTS, this.material);
     this.group.add(
+      this.scaffoldBatch.object,
       this.orbitBatch.object,
       this.ghostBatch.object,
       this.lineBatch.object,
@@ -866,6 +900,10 @@ export class NarrativeScene implements Exhibit {
       重い層であることは残響と同じなので、BALANCED では消える。
     */
     this.updateOrbits(depthScale, this.tierRich && this.orbitsEnabled ? orbitAmount(dimLevel) : 0);
+    this.updateScaffold(
+      depthScale,
+      this.tierRich && this.scaffoldEnabled ? scaffoldAmount(dimLevel) : 0,
+    );
 
     this.lineBatch.commitPositions(SUB_SEGMENTS);
     this.lineBatch.commitColors(SUB_SEGMENTS);
@@ -892,6 +930,7 @@ export class NarrativeScene implements Exhibit {
     // マテリアルは主バッチと共有なので、ここで dispose するのは geometry だけ
     this.ghostBatch?.dispose();
     this.orbitBatch?.dispose();
+    this.scaffoldBatch?.dispose();
     this.pointBatch?.dispose();
     this.material?.dispose();
     const canvas = this.canvas;
@@ -1299,6 +1338,114 @@ export class NarrativeScene implements Exhibit {
   }
 
   /**
+   * 足場(Phase 31)。`dim − 1` の姿を、現在の姿勢のまま薄く敷く。
+   *
+   * 位相は主図形と同一なので履歴は要らない ── 変えるのは extent の引数だけ。
+   * ゲートが閉じているあいだは線分数 0 を**一度だけ**書いて黙る(残響と同じ作法)。
+   */
+  private updateScaffold(depthScale: number, amount: number): void {
+    const batch = this.scaffoldBatch;
+    const poly = this.polytope;
+    if (batch === null || poly === null) return;
+
+    const dimLevel = this.director.dimLevel;
+    if (amount <= 0 || dimLevel <= 1) {
+      if (this.scaffoldDrawn) {
+        this.scaffoldDrawn = false;
+        batch.commitPositions(0);
+      }
+      return;
+    }
+    this.scaffoldDrawn = true;
+
+    const ext = this.scaffoldExtents;
+    for (let k = 0; k < N; k++) {
+      const e = clamp01(dimLevel - 1 - k);
+      ext[k] = e > MIN_GEOM_EXTENT ? e : MIN_GEOM_EXTENT;
+    }
+
+    const base = this.ghostBase;
+    const work = this.scaffoldWork;
+    for (let o = 0; o < GHOST_SUB_POINTS * N; o += N) {
+      work[o] = base[o] * ext[0];
+      work[o + 1] = base[o + 1] * ext[1];
+      work[o + 2] = base[o + 2] * ext[2];
+      work[o + 3] = base[o + 3] * ext[3];
+      work[o + 4] = base[o + 4] * ext[4];
+      work[o + 5] = base[o + 5] * ext[5];
+    }
+
+    // 姿勢は現在のまま(this.rots は主図形が今フレーム使ったもの)
+    rotateBatch(work, work, N, GHOST_SUB_POINTS, this.rots);
+    projectPerspective(work, N, GHOST_SUB_POINTS, DIST, this.scaffoldProj);
+
+    /*
+      輝度は**足場自身の**重なり補正で割り戻す。足場は畳まれた軸を持つ別の図形なので、
+      主図形の補正を借りると次元ごとに濃さが跳ねる(軌道環と同じ論点の裏返し)。
+    */
+    const bright =
+      LINE_BASE_BRIGHTNESS *
+      SCAFFOLD_GAIN *
+      amount *
+      scaffoldDensityFade(dimLevel) *
+      this.overlapCompensation(ext);
+
+    this.scatterScaffold(depthScale, bright);
+    batch.commitPositions(SCAFFOLD_SEGMENTS);
+    batch.commitColors(SCAFFOLD_SEGMENTS);
+  }
+
+  /** 足場の線分展開。ゴールドは乗せない(生まれつつあるのは過去ではない) */
+  private scatterScaffold(depthScale: number, bright: number): void {
+    const poly = this.polytope;
+    const batch = this.scaffoldBatch;
+    if (poly === null || batch === null || poly.edgeAxis === undefined) return;
+
+    const edgeAxis = poly.edgeAxis;
+    const proj = this.scaffoldProj;
+    const lut = this.depthLut;
+    const pos = batch.positions;
+    const col = batch.colors;
+    const ext = this.scaffoldExtents;
+
+    let p = 0;
+    let seg = 0;
+    for (let e = 0; e < poly.edgeCount; e++) {
+      const gain = ext[edgeAxis[e]] * bright;
+
+      let i0 = lutIndexOf(proj[p * 3 + 2], depthScale);
+      for (let s = 0; s < GHOST_SUBDIV; s++) {
+        const p1 = p + 1;
+        const i1 = lutIndexOf(proj[p1 * 3 + 2], depthScale);
+
+        const so = seg * 6;
+        const a = p * 3;
+        const b = p1 * 3;
+        pos[so] = proj[a];
+        pos[so + 1] = proj[a + 1];
+        pos[so + 2] = proj[a + 2];
+        pos[so + 3] = proj[b];
+        pos[so + 4] = proj[b + 1];
+        pos[so + 5] = proj[b + 2];
+
+        const c0 = i0 * 3;
+        const c1 = i1 * 3;
+        col[so] = lut[c0] * gain;
+        col[so + 1] = lut[c0 + 1] * gain;
+        col[so + 2] = lut[c0 + 2] * gain;
+        col[so + 3] = lut[c1] * gain;
+        col[so + 4] = lut[c1 + 1] * gain;
+        col[so + 5] = lut[c1 + 2] * gain;
+
+        i0 = i1;
+        p = p1;
+        seg++;
+      }
+      p++;
+    }
+  }
+
+  /**
    * 畳まれた軸による重なり枚数の逆数。
    *
    * extent[k]=0 の軸ごとに図形は 2 枚重ねになる(頂点が完全に一致する)。
@@ -1306,8 +1453,7 @@ export class NarrativeScene implements Exhibit {
    * Π_k (1 or 2) を割り戻して見かけの明るさを全次元で揃える。
    * 軸が伸び始めたら滑らかに 2 → 1 へ落とす(コピーが視覚的に分離するため)。
    */
-  private overlapCompensation(): number {
-    const ext = this.extents;
+  private overlapCompensation(ext: Float64Array = this.extents): number {
     let collapse = 1;
     for (let k = 0; k < N; k++) {
       collapse *= 2 - smoothstep(ext[k] / SEPARATION_T);
