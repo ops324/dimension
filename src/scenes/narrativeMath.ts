@@ -192,3 +192,28 @@ export const LENS_GATE_WIDTH = 1.2;
 export function lensAmount(dimLevel: number): number {
   return clamp01((dimLevel - LENS_GATE) / LENS_GATE_WIDTH);
 }
+
+/* ----------------------------------------------------------------- 足場(Phase 31)
+
+   残響は「時間の過去」を見せる。足場は **「次元の過去」** ── つねに `dim − 1` の姿を、
+   同じ姿勢・同じ回転のまま薄く置き去りにする。作品の題は「次元の階段」なのに、
+   画面に居るのは常にいまの次元だけで、降りてきた段が一つも残っていなかった。
+
+   1.6 から開くのは、0 次元の点を 1 次元の線に重ねても何も言わないから。
+   6 次元では 192 本に 192 本が重なるので、輝度を次元とともに落とす(下記の密度係数)。 */
+
+export const SCAFFOLD_GATE = 1.6;
+export const SCAFFOLD_GATE_WIDTH = 0.4;
+
+/** 足場の強さ ∈ [0,1] */
+export function scaffoldAmount(dimLevel: number): number {
+  return smoothstep((dimLevel - SCAFFOLD_GATE) / SCAFFOLD_GATE_WIDTH);
+}
+
+/**
+ * 密度による減光。足場の姿(dim − 1)が持つ辺の数は次元とともに増えるので、
+ * そのままだと 6 次元で図が二重の藪になる。0.62^(dim−1−2.5) で薄くしていく。
+ */
+export function scaffoldDensityFade(dimLevel: number): number {
+  return Math.pow(0.62, Math.max(0, dimLevel - 1 - 2.5));
+}
