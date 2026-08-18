@@ -196,15 +196,28 @@ describe('buildFrontTables(波面)', () => {
     }
   });
 
-  it('ゴールドの総量は一様フラッシュより少ない(既知の罠 #6 に対して安全側)', () => {
-    // 「一様」= 旧実装で、辺のどこでも混色比が env だった状態
+  /*
+    **「総量は一様フラッシュより少ない」という試験はここにあったが、捨てた(Phase 28b)。**
+    あれは既知の罠 #6 を「総量を増やさない」と読み違えて自分で置いた縛りで、実測すると
+    天井は総量ではなく**飽和**だった(暖色画素の最大 R が 251〜252 で頭打ち)。
+    総量を縛ると、見えないところまで絞ったまま誰も気づけない ── いま縛るべきは
+    「前線が二段で読めること」である。
+  */
+  it('前線は二段で読める ── 辺ぜんたいが温まり、芯だけがさらに明るい', () => {
     for (const e of [0.3, 0.5, 0.7]) {
-      const env = birthEnvelope(e);
       buildFrontTables(mix, boost, e, SUBDIV);
-      let energy = 0;
-      for (let s = 0; s <= SUBDIV; s++) energy += mix[s] * boost[s];
-      const mean = energy / (SUBDIV + 1);
-      expect(mean).toBeLessThan(env);
+      let hi = 0;
+      let lo = Infinity;
+      for (let s = 0; s <= SUBDIV; s++) {
+        const v = mix[s] * boost[s];
+        if (v > hi) hi = v;
+        if (v < lo) lo = v;
+      }
+      // 下駄(辺ぜんたい)に対して芯は 2 倍以上明るい = 前線の**位置**が読める
+      expect(hi / lo).toBeGreaterThan(2);
+      // 芯から離れた場所には芯の明るさを配らない(BASE を 1 まで上げると崩れる)
+      const far = frontPosition(e) < 0.5 ? SUBDIV : 0;
+      expect(boost[far]).toBeLessThan(1 + FRONT_BOOST * 0.15);
     }
   });
 
