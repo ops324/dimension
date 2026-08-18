@@ -11,7 +11,7 @@ import { PointBatch } from '../render/pointBatch';
 import { PhaseHistory } from '../render/phaseHistory';
 import { CYAN, GOLD, cosinePalette } from '../render/palette';
 
-import { orbitAmount } from './narrativeMath';
+import { buildFrontTables, orbitAmount } from './narrativeMath';
 
 import type { ScrollDirector } from '../core/scrollDirector';
 import type { QualityDetail } from '../core/quality';
@@ -525,6 +525,13 @@ export class NarrativeScene implements Exhibit {
     angle: 0,
   }));
   private orbitsDrawn = false;
+
+  /**
+   * 波面の表(Phase 28)。u = s/SUBDIV における混色比と、芯へ戻す明るさの倍率。
+   * 各 17 要素 = SUBDIV+1 で、内側ループは添字参照だけになる。
+   */
+  private readonly frontMix = new Float64Array(SUBDIV + 1);
+  private readonly frontBoost = new Float64Array(SUBDIV + 1).fill(1);
   /**
    * 検証用の隔離スイッチ(DEV のヘッドレス比較でだけ倒す)。
    * `__DIMENSION__.narrative.orbitsEnabled = false` で同じ次元の on/off 対を撮れる ──
@@ -1306,14 +1313,39 @@ export class NarrativeScene implements Exhibit {
     const extents = this.extents;
     const bright = this.lineBrightness;
 
+    /*
+      波面(Phase 28)。生まれつつある軸は**たかだか 1 本**しかない ── extent[k] は
+      clamp01(dimLevel − k) なので、0 でも 1 でもない k は高々ひとつ。その軸に沿う
+      u ∈ [0,1] の表を 1 本だけ作れば、あとは添字で引ける。
+    */
+    const fmix = this.frontMix;
+    const fboost = this.frontBoost;
+    let birth = -1;
+    for (let k = 0; k < N; k++) {
+      const e = extents[k];
+      if (e > 0 && e < 1) {
+        birth = k;
+        break;
+      }
+    }
+    if (birth >= 0) buildFrontTables(fmix, fboost, extents[birth], SUBDIV);
+
     let p = 0;
     let seg = 0;
 
     for (let e = 0; e < edgeCount; e++) {
       const ext = extents[edgeAxis[e]];
-      // 4·e·(1−e): e=0.5 で 1、伸びきる(e=1)と 0 に戻る「誕生の閃光」
-      const flash = 4 * ext * (1 - ext);
       const gain = ext * bright;
+
+      /*
+        **前線は「生まれる軸に沿う辺」の上だけを走る。**
+
+        2 つのコピー(その軸に沿わない 160 辺)にも下駄を配ってみたが、実測で
+        ゴールドの総量が約 2.3 倍になり、図ぜんたいが金色へ寄った ── 生まれつつ
+        あるのは 1 本の軸であって、図の全体ではない。ここは 0 のままにする
+        (従来と同じ。混色比 0 = 深度パレットそのもの)。
+      */
+      const onBirth = birth >= 0 && edgeAxis[e] === birth;
 
       let i0 = lutIndexOf(proj[p * 3 + 2], depthScale);
       for (let s = 0; s < SUBDIV; s++) {
@@ -1330,14 +1362,20 @@ export class NarrativeScene implements Exhibit {
         pos[so + 4] = proj[b + 1];
         pos[so + 5] = proj[b + 2];
 
+        // 線分の両端で別々の値を書く = 辺の内側は GPU が線形補間する
+        const m0 = onBirth ? fmix[s] : 0;
+        const m1 = onBirth ? fmix[s + 1] : 0;
+        const g0 = onBirth ? gain * fboost[s] : gain;
+        const g1 = onBirth ? gain * fboost[s + 1] : gain;
+
         const c0 = i0 * 3;
         const c1 = i1 * 3;
-        col[so] = (lut[c0] + (gold[c0] - lut[c0]) * flash) * gain;
-        col[so + 1] = (lut[c0 + 1] + (gold[c0 + 1] - lut[c0 + 1]) * flash) * gain;
-        col[so + 2] = (lut[c0 + 2] + (gold[c0 + 2] - lut[c0 + 2]) * flash) * gain;
-        col[so + 3] = (lut[c1] + (gold[c1] - lut[c1]) * flash) * gain;
-        col[so + 4] = (lut[c1 + 1] + (gold[c1 + 1] - lut[c1 + 1]) * flash) * gain;
-        col[so + 5] = (lut[c1 + 2] + (gold[c1 + 2] - lut[c1 + 2]) * flash) * gain;
+        col[so] = (lut[c0] + (gold[c0] - lut[c0]) * m0) * g0;
+        col[so + 1] = (lut[c0 + 1] + (gold[c0 + 1] - lut[c0 + 1]) * m0) * g0;
+        col[so + 2] = (lut[c0 + 2] + (gold[c0 + 2] - lut[c0 + 2]) * m0) * g0;
+        col[so + 3] = (lut[c1] + (gold[c1] - lut[c1]) * m1) * g1;
+        col[so + 4] = (lut[c1 + 1] + (gold[c1 + 1] - lut[c1 + 1]) * m1) * g1;
+        col[so + 5] = (lut[c1 + 2] + (gold[c1 + 2] - lut[c1 + 2]) * m1) * g1;
 
         i0 = i1;
         p = p1;
