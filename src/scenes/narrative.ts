@@ -14,6 +14,9 @@ import { CYAN, GOLD, cosinePalette } from '../render/palette';
 import {
   buildFrontTables,
   fovForDollyZoom,
+  dissolveAmount,
+  dissolveLineFade,
+  dissolveSpread,
   lensAmount,
   LENS_RADIUS_RATE,
   LENS_RADIUS_SNAP,
@@ -606,6 +609,14 @@ export class NarrativeScene implements Exhibit {
   /** 頂点の応答が眠っているか。0 を一度書いたら黙る(レンズと同じ作法) */
   private cursorAsleep = true;
 
+  // --- 昇華(Phase 32)----------------------------------------------------------
+  /** 終章の進み ∈ [0,1]。0 のときこの節は完全に恒等 */
+  private dissolve = 0;
+  /** 頂点サイズを昇華で書き換えたか(戻すのは 1 度だけ) */
+  private sizesDirty = false;
+  /** 頂点ごとの散らばり(init で 1 度だけ焼く決定論的な種) */
+  private dissolveSeed!: Float32Array;
+
   // --- 重力場(Phase 30)--------------------------------------------------------
   /** 図の投影半径(グループ座標)。頂点の彩色ついでに拾う */
   private figureProjRadius = 0;
@@ -649,6 +660,16 @@ export class NarrativeScene implements Exhibit {
     this.ghostBase = new Float64Array(GHOST_SUB_POINTS * N);
     this.ghostWork = new Float64Array(GHOST_SUB_POINTS * N);
     this.ghostProj = new Float32Array(GHOST_SUB_POINTS * 3);
+
+    /*
+      昇華の種(Phase 32)。Math.random は使わない ── 巻き戻したときに同じ星が
+      同じ道を戻るためには、種が**セッションを跨いでも同じ**でなければならない。
+    */
+    this.dissolveSeed = new Float32Array(poly.vertexCount);
+    for (let v = 0; v < poly.vertexCount; v++) {
+      const x = Math.sin((v + 1) * 12.9898) * 43758.5453;
+      this.dissolveSeed[v] = x - Math.floor(x);
+    }
 
     this.scaffoldWork = new Float64Array(GHOST_SUB_POINTS * N);
     this.scaffoldProj = new Float32Array(GHOST_SUB_POINTS * 3);
@@ -865,6 +886,13 @@ export class NarrativeScene implements Exhibit {
     if (!this.initialized || poly === null) return;
 
     const dimLevel = this.director.dimLevel;
+    /*
+      昇華(Phase 32)。駆動は**終章の localT ただ 1 つ**で、時計を持たない ──
+      スクロールを戻せば逆再生で組み上がる(§2.1)。終章以外では厳密に 0。
+    */
+    const locals = this.director.chapterLocals;
+    this.dissolve = dissolveAmount(locals[locals.length - 1]);
+    const dissolveFade = dissolveLineFade(this.dissolve);
 
     // 1) 軸ごとの伸長率を決め、base → work へスケール
     this.applyExtents(dimLevel);
@@ -888,7 +916,8 @@ export class NarrativeScene implements Exhibit {
     const ghostOpen = clamp01((dimLevel - GHOST_GATE) / GHOST_GATE_WIDTH);
     const ghostAmount = this.tierRich && !this.reduceMotion ? ghostOpen : 0;
     const ghostSum = ghostAmount * (GHOST_GAINS[0] + GHOST_GAINS[1] + GHOST_GAINS[2]);
-    this.lineBrightness = (LINE_BASE_BRIGHTNESS * overlap) / (1 + ghostSum * GHOST_OVERLAP_K);
+    this.lineBrightness =
+      (LINE_BASE_BRIGHTNESS * overlap * dissolveFade) / (1 + ghostSum * GHOST_OVERLAP_K);
 
     // 5) 線分への展開と彩色 / 頂点グローの深度キュー
     const depthScale = this.depthScaleFor(dimLevel);
@@ -901,10 +930,14 @@ export class NarrativeScene implements Exhibit {
       運動を減らしたい読者にとってはむしろ「何が起きているか」の説明になる。
       重い層であることは残響と同じなので、BALANCED では消える。
     */
-    this.updateOrbits(depthScale, this.tierRich && this.orbitsEnabled ? orbitAmount(dimLevel) : 0);
+    // 薄い層も一緒にほどける(輪と足場は lineBrightness を経由しないので個別に掛ける)
+    this.updateOrbits(
+      depthScale,
+      this.tierRich && this.orbitsEnabled ? orbitAmount(dimLevel) * dissolveFade : 0,
+    );
     this.updateScaffold(
       depthScale,
-      this.tierRich && this.scaffoldEnabled ? scaffoldAmount(dimLevel) : 0,
+      this.tierRich && this.scaffoldEnabled ? scaffoldAmount(dimLevel) * dissolveFade : 0,
     );
 
     this.lineBatch.commitPositions(SUB_SEGMENTS);
@@ -914,7 +947,9 @@ export class NarrativeScene implements Exhibit {
 
     // 0D の「誕生の星」: 補正後に低次元だけ効くブーストを乗せる
     const birth = 1 + BIRTH_GAIN * (1 - smoothstep(dimLevel));
-    this.pointBatch.setBrightness(POINT_BASE_BRIGHTNESS * overlap * birth);
+    // 散り際は少しだけ暗くする(消すのではない ── 星として残る)
+    const release = 1 - 0.35 * this.dissolve;
+    this.pointBatch.setBrightness(POINT_BASE_BRIGHTNESS * overlap * birth * release);
 
     // 6) カーソル近傍の頂点の応答(Phase 22)
     this.syncCursor();
@@ -1581,7 +1616,41 @@ export class NarrativeScene implements Exhibit {
       const r2 = proj[o] * proj[o] + proj[o + 1] * proj[o + 1];
       if (r2 > maxR2) maxR2 = r2;
     }
+    /*
+      重力場の環は**散る前の**図の大きさで置く(Phase 32)。散った頂点まで数えると、
+      figure が消えていくのに環だけが膨らむ ── 質量が無くなったのに空間が曲がり続ける
+      という嘘になる。強さの側も (1 − dissolve) で落とす。
+    */
     this.figureProjRadius = Math.sqrt(maxR2);
+
+    if (this.dissolve <= 0) {
+      if (this.sizesDirty) {
+        const sizes = this.pointBatch.sizes;
+        for (let v = 0; v < count; v++) sizes[v] = 1;
+        this.pointBatch.commitSizes();
+        this.sizesDirty = false;
+      }
+      return;
+    }
+
+    /*
+      頂点が辺を手放して外へ散る。投影後の**画面に平行な**方向へ広げるので、
+      深度キューも重力場の環もそのまま通る。倍率は頂点ごとの種で散らばり、
+      dissolve の純関数なので巻き戻せば同じ道を戻る。
+    */
+    const sizes = this.pointBatch.sizes;
+    const seeds = this.dissolveSeed;
+    const shrink = 1 - 0.6 * this.dissolve;
+    for (let v = 0; v < count; v++) {
+      const o = v * 3;
+      const k = dissolveSpread(this.dissolve, seeds[v]);
+      proj[o] *= k;
+      proj[o + 1] *= k;
+      proj[o + 2] *= k;
+      sizes[v] = shrink;
+    }
+    this.pointBatch.commitSizes();
+    this.sizesDirty = true;
   }
 
   /**
@@ -1596,7 +1665,8 @@ export class NarrativeScene implements Exhibit {
     const camera = this.camera;
     if (camera === null) return;
 
-    const amount = lensAmount(dimLevel);
+    // 図がほどけたら質量も消える(Phase 32)
+    const amount = lensAmount(dimLevel) * (1 - this.dissolve);
     this.lensAmountValue = amount;
 
     const dist = camera.position.length();

@@ -234,3 +234,48 @@ export function scaffoldAmount(dimLevel: number): number {
 export function scaffoldDensityFade(dimLevel: number): number {
   return Math.pow(0.62, Math.max(0, dimLevel - 1 - 2.5));
 }
+
+/* ----------------------------------------------------------------- 昇華(Phase 32)
+
+   終章 BEYOND は文章と CTA だけで、図は何事もなかったように回り続けていた ──
+   **物語が終わったことを、図が知らない。**
+
+   64 個の頂点が辺を手放し、外へ散り、背景の星野に紛れる。ギャラリーは「その星のなか」に
+   なる。駆動は終章の `localT` ただ 1 つで、**スクロールを戻せば逆再生で組み上がる**
+   (可逆はこの作品の契約 §2.1 なので、ここでも破らない)。
+
+   0.15 から始めるのは、章に入ってすぐ崩れると「読む前に終わった」になるから。
+   0.75 で散り切り、残りは余韻(CTA を読む時間)。 */
+
+export const DISSOLVE_START = 0.15;
+export const DISSOLVE_WIDTH = 0.6;
+/**
+ * 頂点が外へ出る量(1 = 画面上の距離が 2 倍)。乱数ぶんは頂点ごとの散らばり。
+ *
+ * 最初は 1.15 + 2.6·seed(最大 4.75 倍)にしていたが、実測すると**全部が画面の外へ
+ * 出て**しまい、終章の終わりには星野しか残らなかった ── それは「星になった」ではなく
+ * 「居なくなった」である。最大 2.9 倍に抑えると、外側の頂点だけが枠を出て、
+ * 内側だったものは星として画面に残る。
+ */
+export const DISSOLVE_SPREAD = 0.55;
+export const DISSOLVE_SPREAD_RANDOM = 1.35;
+/** 散りの時間曲線。1 より大きいほど「はじめは静かに、あとで速く」 */
+export const DISSOLVE_EASE = 1.65;
+/** 線が消える速さ。頂点より先に辺が手を離す */
+export const DISSOLVE_LINE_EXP = 2.2;
+
+/** 終章の localT → 昇華の進み ∈ [0,1] */
+export function dissolveAmount(localT: number): number {
+  return smoothstep((localT - DISSOLVE_START) / DISSOLVE_WIDTH);
+}
+
+/** 線の残り輝度 ∈ [0,1]。頂点より先に辺が消える */
+export function dissolveLineFade(amount: number): number {
+  return Math.pow(1 - clamp01(amount), DISSOLVE_LINE_EXP);
+}
+
+/** 頂点の飛び出し倍率。`seed` ∈ [0,1) は頂点ごとの決定論的な散らばり */
+export function dissolveSpread(amount: number, seed: number): number {
+  const t = Math.pow(clamp01(amount), DISSOLVE_EASE);
+  return 1 + (DISSOLVE_SPREAD + DISSOLVE_SPREAD_RANDOM * seed) * t;
+}
