@@ -11,7 +11,12 @@ import { PointBatch } from '../render/pointBatch';
 import { PhaseHistory } from '../render/phaseHistory';
 import { CYAN, GOLD, cosinePalette } from '../render/palette';
 
-import { buildFrontTables, orbitAmount } from './narrativeMath';
+import {
+  buildFrontTables,
+  fovForDollyZoom,
+  orbitAmount,
+  vertigoScale,
+} from './narrativeMath';
 
 import type { ScrollDirector } from '../core/scrollDirector';
 import type { QualityDetail } from '../core/quality';
@@ -476,6 +481,12 @@ export class NarrativeScene implements Exhibit {
 
   /** 軸ごとの伸長率(輝度用の真値) */
   private readonly extents = new Float64Array(N);
+  /**
+   * いま伸びている最中の軸(0 でも 1 でもない extent を持つ軸)。無ければ −1。
+   * `extent[k] = clamp01(dimLevel − k)` なので、そんな軸は**たかだか 1 本**しかない。
+   * 彩色(波面)とカメラ(めまい)が同じ 1 つの事実を読むための場所。
+   */
+  private birthAxis = -1;
   /** 同(ジオメトリ用。0 を MIN_GEOM_EXTENT で床上げしたもの) */
   private readonly geomExtents = new Float64Array(N);
 
@@ -951,11 +962,14 @@ export class NarrativeScene implements Exhibit {
   private applyExtents(dimLevel: number): void {
     const ext = this.extents;
     const geo = this.geomExtents;
+    let birth = -1;
     for (let k = 0; k < N; k++) {
       const e = clamp01(dimLevel - k);
       ext[k] = e;
       geo[k] = e > MIN_GEOM_EXTENT ? e : MIN_GEOM_EXTENT;
+      if (e > 0 && e < 1) birth = k;
     }
+    this.birthAxis = birth;
 
     const e0 = geo[0];
     const e1 = geo[1];
@@ -1320,14 +1334,7 @@ export class NarrativeScene implements Exhibit {
     */
     const fmix = this.frontMix;
     const fboost = this.frontBoost;
-    let birth = -1;
-    for (let k = 0; k < N; k++) {
-      const e = extents[k];
-      if (e > 0 && e < 1) {
-        birth = k;
-        break;
-      }
-    }
+    const birth = this.birthAxis;
     if (birth >= 0) buildFrontTables(fmix, fboost, extents[birth], SUBDIV);
 
     let p = 0;
@@ -1415,9 +1422,20 @@ export class NarrativeScene implements Exhibit {
     // 値は resize でだけ決まる ── 毎フレームここで計算し直さない(線幅と同じ 1 個)
     const dolly = this.dolly;
 
-    let x = (from.x + (to.x - from.x) * b) * dolly;
-    let y = (from.y + (to.y - from.y) * b) * dolly;
-    let z = (from.z + (to.z - from.z) * b) * dolly;
+    /*
+      めまい(Phase 29)。**画面上の大きさを保ったまま**半径と画角を交換する。
+      駆動は章の番号ではなく「軸が生まれている最中か」── 包絡は誕生フラッシュと同じ
+      4e(1−e) なので、次元が動かない prologue / epilogue では厳密に 1 倍で、
+      しかも dimLevel の純関数なので巻き戻しでも同じ絵になる。
+      縦長ドリーとは乗算で合成される(構図の縦横比は不変)。
+    */
+    const vertigo =
+      this.reduceMotion || this.birthAxis < 0 ? 1 : vertigoScale(this.extents[this.birthAxis]);
+    const radiusScale = dolly * vertigo;
+
+    let x = (from.x + (to.x - from.x) * b) * radiusScale;
+    let y = (from.y + (to.y - from.y) * b) * radiusScale;
+    let z = (from.z + (to.z - from.z) * b) * radiusScale;
 
     if (!this.reduceMotion) {
       x += Math.sin(t * 0.3) * DRIFT_X;
@@ -1474,7 +1492,8 @@ export class NarrativeScene implements Exhibit {
     camera.position.set(x, y, z);
     camera.lookAt(0, 0, 0);
 
-    const fov = from.fov + (to.fov - from.fov) * b;
+    // 半径を縮めたぶんだけ画角を開く(2·d·tan(fov/2) の保存)
+    const fov = fovForDollyZoom(from.fov + (to.fov - from.fov) * b, vertigo);
     if (Math.abs(camera.fov - fov) > 1e-3) {
       camera.fov = fov;
       camera.updateProjectionMatrix();

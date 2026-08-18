@@ -14,6 +14,9 @@ import {
   ORBIT_GATE,
   ORBIT_GATE_WIDTH,
   orbitAmount,
+  VERTIGO_AMOUNT,
+  vertigoScale,
+  fovForDollyZoom,
 } from '../scenes/narrativeMath';
 
 const TAU = Math.PI * 2;
@@ -202,5 +205,63 @@ describe('buildFrontTables(波面)', () => {
       expect(peak).toBeGreaterThanOrEqual(prev);
       prev = peak;
     }
+  });
+});
+
+describe('めまい(ドリーズーム)', () => {
+  it('次元が動かないところでは恒等(prologue / epilogue / プラトー)', () => {
+    for (const e of [0, 1]) {
+      expect(vertigoScale(e)).toBe(1);
+      expect(fovForDollyZoom(50, vertigoScale(e))).toBe(50);
+    }
+  });
+
+  it('もっとも深く効くのは伸長の半ばで、深さは AMOUNT ぶん', () => {
+    expect(vertigoScale(0.5)).toBeCloseTo(1 - VERTIGO_AMOUNT, 12);
+    let min = 1;
+    let at = -1;
+    for (let e = 0; e <= 1.0001; e += 0.01) {
+      const m = vertigoScale(e);
+      if (m < min) {
+        min = m;
+        at = e;
+      }
+    }
+    expect(at).toBeCloseTo(0.5, 2);
+    expect(min).toBeCloseTo(1 - VERTIGO_AMOUNT, 12);
+  });
+
+  it('画面上の大きさ 2·d·tan(fov/2) を保存する', () => {
+    for (const fov of [40, 46, 50, 54]) {
+      for (const m of [0.85, 0.9, 0.95, 1, 1.1]) {
+        const d = 4.6;
+        const before = d * Math.tan((fov * Math.PI) / 360);
+        const after = d * m * Math.tan((fovForDollyZoom(fov, m) * Math.PI) / 360);
+        expect(after).toBeCloseTo(before, 12);
+      }
+    }
+  });
+
+  it('画角は (0, 180) を出ない', () => {
+    for (let e = 0; e <= 1.0001; e += 0.02) {
+      const f = fovForDollyZoom(54, vertigoScale(e));
+      expect(f).toBeGreaterThan(0);
+      expect(f).toBeLessThan(180);
+      // 寄るぶんだけ広がる(狭まらない)
+      expect(f).toBeGreaterThanOrEqual(54 - 1e-9);
+    }
+  });
+
+  it('章のいちばん広い画角でも増分は 9° を超えない', () => {
+    const widest = 54; // CAMERA_KEYS の最大(epilogue)
+    const peak = fovForDollyZoom(widest, vertigoScale(0.5));
+    expect(peak - widest).toBeLessThan(9);
+    expect(peak - widest).toBeGreaterThan(3);
+  });
+
+  it('不正な倍率では素通しする(0 割りを構造的に避ける)', () => {
+    expect(fovForDollyZoom(50, 0)).toBe(50);
+    expect(fovForDollyZoom(50, -1)).toBe(50);
+    expect(fovForDollyZoom(50, Number.NaN)).toBe(50);
   });
 });
