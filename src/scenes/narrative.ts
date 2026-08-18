@@ -15,6 +15,8 @@ import {
   buildFrontTables,
   fovForDollyZoom,
   lensAmount,
+  LENS_RADIUS_RATE,
+  LENS_RADIUS_SNAP,
   orbitAmount,
   scaffoldAmount,
   scaffoldDensityFade,
@@ -921,7 +923,7 @@ export class NarrativeScene implements Exhibit {
     this.updateCamera(t, dt);
 
     // 8) 重力場の場(カメラが確定したあとで測る ── 1 フレームの遅れを作らない)
-    this.updateLensField(dimLevel);
+    this.updateLensField(dimLevel, dt);
   }
 
   dispose(): void {
@@ -1590,20 +1592,29 @@ export class NarrativeScene implements Exhibit {
    * めまい(Phase 29)が半径と画角を同時に動かしても、この式は分母でその積を見るので
    * **環は図に貼りついたまま**になる ── ドリーズームの最中に環だけ滑ることがない。
    */
-  private updateLensField(dimLevel: number): void {
+  private updateLensField(dimLevel: number, dt: number): void {
     const camera = this.camera;
     if (camera === null) return;
 
     const amount = lensAmount(dimLevel);
     this.lensAmountValue = amount;
-    if (amount <= 0) {
-      this.lensNdcRadius = 0;
-      return;
-    }
+
     const dist = camera.position.length();
     const halfTan = Math.tan((camera.fov * Math.PI) / 360);
     const denom = dist * halfTan;
-    this.lensNdcRadius = denom > 1e-3 ? (this.figureProjRadius * WORLD_SCALE) / denom : 0;
+    const target = denom > 1e-3 ? (this.figureProjRadius * WORLD_SCALE) / denom : 0;
+
+    /*
+      **消えているあいだはスナップする**(Phase 30b)。強さ 0 の区間で古い半径を
+      引きずったまま止めると、次に開くとき環が「どこかから滑ってくる」── 見えない
+      あいだに正しい値へ置いておけば、開きはじめは必ずその場から始まる。
+      大きな飛び(モード遷移・スクロールの瞬間移動)も同じ理由でスナップ。
+    */
+    if (amount <= 0 || Math.abs(target - this.lensNdcRadius) > LENS_RADIUS_SNAP) {
+      this.lensNdcRadius = target;
+      return;
+    }
+    this.lensNdcRadius = expSmooth(this.lensNdcRadius, target, LENS_RADIUS_RATE, dt);
   }
 
   /**

@@ -284,7 +284,7 @@ describe('重力場のゲート', () => {
     expect(lensAmount(99)).toBe(1);
   });
 
-  it('立ち上がりは線形で単調', () => {
+  it('中点は 0.5 で、全域が単調', () => {
     expect(lensAmount(LENS_GATE + LENS_GATE_WIDTH / 2)).toBeCloseTo(0.5, 12);
     let prev = -1;
     for (let d = 4; d <= 6.5; d += 0.05) {
@@ -292,6 +292,16 @@ describe('重力場のゲート', () => {
       expect(a).toBeGreaterThanOrEqual(prev - 1e-12);
       prev = a;
     }
+  });
+
+  it('**両端で微分が 0**(Phase 30b)── どこから曲がりはじめたか分からないまま曲がる', () => {
+    const h = 1e-4;
+    const slope = (d: number): number => (lensAmount(d + h) - lensAmount(d - h)) / (2 * h);
+    // 立ち上がりの足元と、開き切る手前。線形 clamp なら 1/WIDTH ≒ 0.83 が立つ場所
+    expect(Math.abs(slope(LENS_GATE + 1e-3))).toBeLessThan(0.02);
+    expect(Math.abs(slope(LENS_GATE + LENS_GATE_WIDTH - 1e-3))).toBeLessThan(0.02);
+    // 中央では最も速い(1.5/WIDTH = 1.25)
+    expect(slope(LENS_GATE + LENS_GATE_WIDTH / 2)).toBeCloseTo(1.5 / LENS_GATE_WIDTH, 3);
   });
 });
 
