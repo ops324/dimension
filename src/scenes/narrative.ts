@@ -11,6 +11,8 @@ import { PointBatch } from '../render/pointBatch';
 import { PhaseHistory } from '../render/phaseHistory';
 import { CYAN, GOLD, cosinePalette } from '../render/palette';
 
+import { orbitAmount } from './narrativeMath';
+
 import type { ScrollDirector } from '../core/scrollDirector';
 import type { QualityDetail } from '../core/quality';
 import type { EngineCtx, Exhibit } from './exhibit';
@@ -379,6 +381,65 @@ const GHOST_HISTORY_CAPACITY = 128;
 /** これ以上フレームが飛んだら履歴を捨てる(タブ復帰・長いフレーム落ち) */
 const GHOST_HISTORY_MAX_GAP = 0.5;
 
+/* --------------------------------------------------- 軌道環(Phase 27)
+
+   残響は「さっきどこに居たか」を見せた。軌道環は **「このあとどこへ行くか」** を見せる。
+
+   等傾二重回転のもとでは、すべての点が円を描く ── 4 次元の回転が 2 枚の直交する
+   平面で同角・同速に進むとき、軌道は閉じる。その円をそのまま同じ投影で重ねると、
+   8 本の輪が互いに絡んで現れる。**これはホップ束そのもの**で、物語の第四章が
+   ギャラリーの HOPF FIBRATION へ静かに伏線を張ることになる。
+
+   **近似で描かない。** 現在位置に外側から Iso(θ) を掛けるのが最も安い実装だが、
+   等傾ペアは (2,4)(0,5) と可換ではないので、5 次元以降でその輪は「頂点が通る道」で
+   なくなる。ここでするのは **位相に θ を足すこと**だけ ── 主図形とまったく同じ
+   rotateBatch → projectPerspective を通すので、輪の意味は全次元で厳密に
+   「他の平面が止まっていれば、この頂点はこの上を進む」で保たれる。
+
+   **描く頂点は 8 つ**。bit0..3 の偶パリティ、つまりテッセラクトに内接する
+   16-cell(demitesseract)の頂点集合である。(b0,b1,b2) の 8 通りをちょうど一度ずつ
+   含むので、3 次元の章では立方体の 8 隅とぴたり重なる ── 読者が輪の根元を探したとき、
+   それは必ず「知っている角」にある。
+
+   **頂点グローは重ねない**(残響と同じ判断)。光る点は物体として読まれるので、
+   輪の上を走る玉を置くと図が模型になる。輪は道であって乗り物ではない。
+*/
+
+/** 軌道を描く頂点(6-cube の bit0..3 が偶パリティ)。低位 4bit なので dim<4 でも一致する */
+const ORBIT_VERTICES = (() => {
+  const list: number[] = [];
+  for (let v = 0; v < 16; v++) {
+    let bits = 0;
+    for (let b = 0; b < 4; b++) bits += (v >> b) & 1;
+    if (bits % 2 === 0) list.push(v);
+  }
+  return list;
+})();
+
+/**
+ * 等傾ペアの SCHEDULE 枠番号。
+ * 表を書き換えても追随するよう、番号ではなく**性質**(4 次元ゲートで開く、
+ * 角速度が 0 でない)で引く。現在の SCHEDULE では [3, 4] = (0,3) と (1,2)。
+ */
+const ISOCLINIC_SLOTS = (() => {
+  const slots: number[] = [];
+  for (let r = 0; r < SCHEDULE.length; r++) {
+    if (SCHEDULE[r].gate === 3 && SCHEDULE[r].high > 0) slots.push(r);
+  }
+  return slots;
+})();
+
+/** 1 本の輪の分割数。48 分割なら 6D の視野角でも多角形の角が見えない */
+const ORBIT_SAMPLES = 48;
+/** 8 頂点 × 48 = 384 セグメント(主図形 3072 の 12.5%) */
+const ORBIT_SEGMENTS = ORBIT_VERTICES.length * ORBIT_SAMPLES;
+/**
+ * 輪の輝度(図の**見かけ**の明るさを 1 としたとき)。
+ * 残響のいちばん濃い枚(0.12)より下、いちばん薄い枚(0.04)より上に置く ──
+ * 痕跡より存在感があり、図そのものよりは遥かに下、という序列にする。
+ */
+const ORBIT_GAIN = 0.09;
+
 /** 深度(投影後 z、正規化済み ∈[-1,1])→ LUT の行インデックス */
 function lutIndexOf(depth: number, scale: number): number {
   const t = (depth * scale + 1) * 0.5 * LUT_MAX;
@@ -445,10 +506,31 @@ export class NarrativeScene implements Exhibit {
     GHOST_HISTORY_CAPACITY,
     GHOST_HISTORY_MAX_GAP,
   );
-  /** 品質ティアが残響を許すか(HIGH / ULTRA のみ) */
-  private tierAllowsGhosts = true;
+  /** 品質ティアが「薄い層」(残響・軌道環)を許すか(HIGH / ULTRA のみ) */
+  private tierRich = true;
   /** 直前のフレームで残響を描いていたか。落とすときに一度だけ 0 を書く */
   private ghostsDrawn = false;
+
+  // --- 軌道環(Phase 27)--------------------------------------------------------
+  private orbitBatch: LineBatch | null = null;
+  /** 8 頂点ぶんの作業領域(6D)。**主経路の vertWork には触れない** */
+  private orbitWork!: Float64Array;
+  private orbitProj!: Float32Array;
+  /** サンプルした輪の点([頂点][θ] の順に 3 成分) */
+  private orbitRing!: Float32Array;
+  /** θ を足した位相を書く先。this.rots を汚さないための別インスタンス */
+  private readonly orbitRots: PlaneRotation[] = SCHEDULE.map((s) => ({
+    i: s.i,
+    j: s.j,
+    angle: 0,
+  }));
+  private orbitsDrawn = false;
+  /**
+   * 検証用の隔離スイッチ(DEV のヘッドレス比較でだけ倒す)。
+   * `__DIMENSION__.narrative.orbitsEnabled = false` で同じ次元の on/off 対を撮れる ──
+   * 品質ティアを落とす方法では DPR もブルームも一緒に動いてしまい、隔離にならない。
+   */
+  orbitsEnabled = true;
 
   /** engine のカメラ。物語モードでは OrbitControls を使わずここから直接駆動する */
   private camera: THREE.PerspectiveCamera | null = null;
@@ -512,6 +594,10 @@ export class NarrativeScene implements Exhibit {
     this.ghostWork = new Float64Array(GHOST_SUB_POINTS * N);
     this.ghostProj = new Float32Array(GHOST_SUB_POINTS * 3);
 
+    this.orbitWork = new Float64Array(ORBIT_VERTICES.length * N);
+    this.orbitProj = new Float32Array(ORBIT_VERTICES.length * 3);
+    this.orbitRing = new Float32Array(ORBIT_SEGMENTS * 3);
+
     this.buildSubdivided(poly, SUBDIV, this.subBase);
     this.buildSubdivided(poly, GHOST_SUBDIV, this.ghostBase);
     this.vertBase.set(poly.vertices);
@@ -553,7 +639,15 @@ export class NarrativeScene implements Exhibit {
       主図形より**先に** add する = 残響は主図形の下に敷かれる。
     */
     this.ghostBatch = new LineBatch(GHOST_SEGMENTS * GHOST_COUNT, this.material);
-    this.group.add(this.ghostBatch.object, this.lineBatch.object, this.pointBatch.object);
+    // 軌道環も同じマテリアルに相乗りする(Phase 27)。増えるのはドローコール 1 つだけ。
+    // 主図形より**先に** add = 輪は図の下に敷かれる(残響と同じ順序)
+    this.orbitBatch = new LineBatch(ORBIT_SEGMENTS, this.material);
+    this.group.add(
+      this.orbitBatch.object,
+      this.ghostBatch.object,
+      this.lineBatch.object,
+      this.pointBatch.object,
+    );
 
     // 品質ティアの購読(quality.ts が投げる CustomEvent)。残響は HIGH / ULTRA だけ
     window.addEventListener('dimension:quality', this.onQuality);
@@ -662,7 +756,7 @@ export class NarrativeScene implements Exhibit {
    */
   private readonly onQuality = (event: Event): void => {
     const detail = (event as CustomEvent<QualityDetail>).detail;
-    this.tierAllowsGhosts = detail.tier !== 'BALANCED';
+    this.tierRich = detail.tier !== 'BALANCED';
   };
 
   private readonly onPointerEnd = (event: PointerEvent): void => {
@@ -717,7 +811,7 @@ export class NarrativeScene implements Exhibit {
     const overlap = this.overlapCompensation();
     // 残響が乗るぶんだけ主図形を先に引く(部分補正、既知の罠 #6)
     const ghostOpen = clamp01((dimLevel - GHOST_GATE) / GHOST_GATE_WIDTH);
-    const ghostAmount = this.tierAllowsGhosts && !this.reduceMotion ? ghostOpen : 0;
+    const ghostAmount = this.tierRich && !this.reduceMotion ? ghostOpen : 0;
     const ghostSum = ghostAmount * (GHOST_GAINS[0] + GHOST_GAINS[1] + GHOST_GAINS[2]);
     this.lineBrightness = (LINE_BASE_BRIGHTNESS * overlap) / (1 + ghostSum * GHOST_OVERLAP_K);
 
@@ -726,6 +820,13 @@ export class NarrativeScene implements Exhibit {
     this.scatterSegments(depthScale);
     this.shadeVertices(poly.vertexCount, depthScale);
     this.updateGhosts(t, depthScale, ghostAmount);
+    /*
+      軌道環は **reduced-motion でも消さない**(Phase 27)。残響は運動の残像なので
+      止めるが、輪はそれ自身が動く表現ではない ── 図と一緒に回るだけの静止した注釈で、
+      運動を減らしたい読者にとってはむしろ「何が起きているか」の説明になる。
+      重い層であることは残響と同じなので、BALANCED では消える。
+    */
+    this.updateOrbits(depthScale, this.tierRich && this.orbitsEnabled ? orbitAmount(dimLevel) : 0);
 
     this.lineBatch.commitPositions(SUB_SEGMENTS);
     this.lineBatch.commitColors(SUB_SEGMENTS);
@@ -748,6 +849,7 @@ export class NarrativeScene implements Exhibit {
     this.lineBatch?.dispose();
     // マテリアルは主バッチと共有なので、ここで dispose するのは geometry だけ
     this.ghostBatch?.dispose();
+    this.orbitBatch?.dispose();
     this.pointBatch?.dispose();
     this.material?.dispose();
     const canvas = this.canvas;
@@ -1027,6 +1129,127 @@ export class NarrativeScene implements Exhibit {
         seg++;
       }
       p++; // 辺の終端点を消費して次の辺の先頭へ
+    }
+  }
+
+  /**
+   * 軌道環(Phase 27)。等傾ペアの位相だけを θ ぶん進めた姿を ORBIT_SAMPLES 点
+   * サンプルし、頂点ごとの閉曲線として重ねる。
+   *
+   * **位相に足す**のであって、現在位置に回転を掛けるのではない ── 主図形と同じ
+   * rotateBatch → projectPerspective を通るので、輪は投影カスケードの曲率まで
+   * 図と同じ規則で曲がる(外から Iso(θ) を掛ける近似では 5D 以降で両者がずれる)。
+   *
+   * ゲートが閉じているあいだは線分数 0 を**一度だけ**書いて、以後は CPU も GPU も
+   * 一切払わない(残響と同じ作法)。
+   */
+  private updateOrbits(depthScale: number, amount: number): void {
+    const batch = this.orbitBatch;
+    if (batch === null) return;
+
+    if (amount <= 0) {
+      if (this.orbitsDrawn) {
+        this.orbitsDrawn = false;
+        batch.commitPositions(0);
+      }
+      return;
+    }
+    this.orbitsDrawn = true;
+
+    const geo = this.geomExtents;
+    const base = this.vertBase;
+    const work = this.orbitWork;
+    const proj = this.orbitProj;
+    const ring = this.orbitRing;
+    const rots = this.orbitRots;
+    const phases = this.phases;
+    const count = ORBIT_VERTICES.length;
+
+    // 等傾ペア以外の枠は「いまの姿勢」をそのまま使う(輪は現在の姿勢の上に乗る)
+    for (let r = 0; r < SCHEDULE.length; r++) rots[r].angle = phases[r];
+
+    for (let s = 0; s < ORBIT_SAMPLES; s++) {
+      const theta = (s / ORBIT_SAMPLES) * TAU;
+      for (let k = 0; k < ISOCLINIC_SLOTS.length; k++) {
+        const slot = ISOCLINIC_SLOTS[k];
+        rots[slot].angle = phases[slot] + theta;
+      }
+
+      for (let v = 0; v < count; v++) {
+        const src = ORBIT_VERTICES[v] * N;
+        const dst = v * N;
+        work[dst] = base[src] * geo[0];
+        work[dst + 1] = base[src + 1] * geo[1];
+        work[dst + 2] = base[src + 2] * geo[2];
+        work[dst + 3] = base[src + 3] * geo[3];
+        work[dst + 4] = base[src + 4] * geo[4];
+        work[dst + 5] = base[src + 5] * geo[5];
+      }
+
+      rotateBatch(work, work, N, count, rots);
+      projectPerspective(work, N, count, DIST, proj);
+
+      for (let v = 0; v < count; v++) {
+        const o = (v * ORBIT_SAMPLES + s) * 3;
+        const q = v * 3;
+        ring[o] = proj[q];
+        ring[o + 1] = proj[q + 1];
+        ring[o + 2] = proj[q + 2];
+      }
+    }
+
+    this.scatterOrbits(depthScale, LINE_BASE_BRIGHTNESS * ORBIT_GAIN * amount);
+    batch.commitPositions(ORBIT_SEGMENTS);
+    batch.commitColors(ORBIT_SEGMENTS);
+  }
+
+  /**
+   * サンプル点列を閉じた線分列へ展開する。配色は主図形と同じ深度 LUT
+   * (新しい色は 1 つも作らない)。
+   *
+   * 輝度に **重なり補正を掛けない**のが要点(既知の罠 #6 の裏返し)。図は畳まれた
+   * 軸のぶんだけ複数枚が完全に重なって描かれるので、1 枚あたりの輝度を
+   * 1/2^collapsed へ落としてある ── 加算後の**見かけ**はどの次元でも
+   * LINE_BASE_BRIGHTNESS に揃う。輪は頂点ごとに 1 本しか描かれないから、同じ係数を
+   * 掛けると 4D では 1/4 の暗さになってしまう。図の見かけに対する比を全次元で
+   * 一定にするため、補正前の基礎輝度から作る。
+   */
+  private scatterOrbits(depthScale: number, bright: number): void {
+    const batch = this.orbitBatch;
+    if (batch === null) return;
+
+    const ring = this.orbitRing;
+    const lut = this.depthLut;
+    const pos = batch.positions;
+    const col = batch.colors;
+
+    let seg = 0;
+    for (let v = 0; v < ORBIT_VERTICES.length; v++) {
+      const head = v * ORBIT_SAMPLES;
+      for (let s = 0; s < ORBIT_SAMPLES; s++) {
+        const a = (head + s) * 3;
+        // 最後の点は先頭へ戻して輪を閉じる
+        const b = (head + (s + 1 === ORBIT_SAMPLES ? 0 : s + 1)) * 3;
+        const so = seg * 6;
+
+        pos[so] = ring[a];
+        pos[so + 1] = ring[a + 1];
+        pos[so + 2] = ring[a + 2];
+        pos[so + 3] = ring[b];
+        pos[so + 4] = ring[b + 1];
+        pos[so + 5] = ring[b + 2];
+
+        const c0 = lutIndexOf(ring[a + 2], depthScale) * 3;
+        const c1 = lutIndexOf(ring[b + 2], depthScale) * 3;
+        col[so] = lut[c0] * bright;
+        col[so + 1] = lut[c0 + 1] * bright;
+        col[so + 2] = lut[c0 + 2] * bright;
+        col[so + 3] = lut[c1] * bright;
+        col[so + 4] = lut[c1 + 1] * bright;
+        col[so + 5] = lut[c1 + 2] * bright;
+
+        seg++;
+      }
     }
   }
 
