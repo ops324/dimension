@@ -441,7 +441,8 @@ body.fonts-ready #narrative {
   cursor: pointer;
   transition:
     color var(--t-med) var(--ease-out-quint),
-    border-color var(--t-med) var(--ease-out-quint);
+    border-color var(--t-med) var(--ease-out-quint),
+    transform var(--t-fast) var(--ease-out-quint);
 }
 
 .cta::before {
@@ -479,6 +480,39 @@ body.fonts-ready #narrative {
 .cta:hover .cta-arrow,
 .cta:focus-visible .cta-arrow {
   transform: translateX(6px);
+}
+
+/* ------------------------------------------------------------------ タッチの CTA(Phase 33)
+
+   このボタンの平常時は「掃かれる前」── 透明な器に 1px のヘアラインだけである。
+   それはホバーという**予告のある入力**が前提の設計で、指にはその予告が無い:
+   タッチ端末では色は押している最中にしか現れず、物語の唯一の出口が、
+   終章の暗い画面でただの細い枠として置かれていた。
+
+   `(hover: none)` で**掃き終わった状態を既定**にする。ホバー時と同じ塗り・同じ文字色
+   なので、新しい色も新しい状態も作っていない ── 出しているのは「このボタンが到達する
+   はずだった姿」そのもの。タッチスクリーン付きのデスクトップは主入力がマウスなので
+   `(hover: hover)` を返し、この節に入らない(幅では判定しない理由もそこにある)。
+
+   代わりに押下の手応えを足す:塗りが常時あるぶん、押しても何も起きないと死んで見える。
+   0.985 のたわみと矢印の 6px は、ホバーが担っていた「効いている」の合図の置き換えである。 */
+@media (hover: none) {
+  .cta {
+    color: #05060f;
+    border-color: transparent;
+  }
+
+  .cta::before {
+    transform: scaleX(1);
+  }
+
+  .cta:active {
+    transform: scale(0.985);
+  }
+
+  .cta:active .cta-arrow {
+    transform: translateX(6px);
+  }
 }
 
 /* ------------------------------------------------------------------ HUD
