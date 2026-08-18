@@ -137,3 +137,41 @@ export function buildFrontTables(
     boost[s] = 1 + FRONT_BOOST * env * g;
   }
 }
+
+/* --------------------------------------------------------------- めまい(Phase 29)
+
+   章のカメラは位置と画角を smoothstep で混ぜている。移動は上品だが、「次元が増えた」と
+   いう**身体の感覚**がない ── ただ寄るだけなら、図が大きくなるだけだ。
+
+   ドリーズーム(ヒッチコックが『めまい』で撮った方法)は、**被写体の画面上の大きさを
+   保ったまま**距離と画角を交換する。保存量は
+
+     size ∝ 2·d·tan(fov/2)
+
+   なので、半径を m 倍したら tan(fov/2) を 1/m 倍すればよい。図は 1 ミリも動かないのに、
+   背後の星と図の内部の透視だけが伸びる。
+
+   **駆動は章ではなく「軸が生まれている最中か」。** 包絡は誕生フラッシュと同じ `4e(1−e)` を
+   使う ── これで prologue と epilogue(次元が動かない章)では何も起きず、しかも dimLevel の
+   純関数なので巻き戻しでも同じ絵になる(§2.1)。章番号で駆動すると、この 2 つがどちらも
+   壊れる。
+
+   0.15 は fov 50° に対して約 +7°。`prefers-reduced-motion` では完全に停止する。 */
+
+/** ドリーズームの深さ。1 章あたり fov ±9° を上限とみて選んだ値 */
+export const VERTIGO_AMOUNT = 0.15;
+
+/** 半径に掛ける倍率 ∈ (0,1]。誕生の最中だけ 1 を下回る */
+export function vertigoScale(extent: number, amount = VERTIGO_AMOUNT): number {
+  return 1 - amount * birthEnvelope(extent);
+}
+
+/**
+ * 半径を `scale` 倍したときに **画面上の大きさを保つ** 画角(度)。
+ * `2·d·tan(fov/2)` が不変になるよう tan(fov/2) を 1/scale 倍する。
+ */
+export function fovForDollyZoom(fovDeg: number, scale: number): number {
+  if (!(scale > 0) || scale === 1) return fovDeg;
+  const half = (fovDeg * Math.PI) / 360;
+  return (2 * Math.atan(Math.tan(half) / scale) * 180) / Math.PI;
+}
