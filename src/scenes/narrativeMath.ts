@@ -175,3 +175,20 @@ export function fovForDollyZoom(fovDeg: number, scale: number): number {
   const half = (fovDeg * Math.PI) / 360;
   return (2 * Math.atan(Math.tan(half) / scale) * 180) / Math.PI;
 }
+
+/* --------------------------------------------------------------- 重力場(Phase 30)
+
+   カーソルの下では時空が歪む(§4.7)。読者の指には重力があるのに、図そのものには
+   無かった ── 第五章から、図の周囲で星野が曲がりはじめる。
+
+   立ち上がりを 4.6 に置くのは、第五の軸が伸び切る(dimLevel 5)より**手前**から
+   気配を出すため。5.8 で開き切り、第六章では最大のまま動かない ── 「次元が増えるほど
+   空間が曲がる」という一行の宣言なので、上限は最後の章に置く。 */
+
+export const LENS_GATE = 4.6;
+export const LENS_GATE_WIDTH = 1.2;
+
+/** 重力場の強さ ∈ [0,1]。4.6 → 5.8 で開き、以後は最大のまま */
+export function lensAmount(dimLevel: number): number {
+  return clamp01((dimLevel - LENS_GATE) / LENS_GATE_WIDTH);
+}

@@ -14,6 +14,9 @@ import {
   ORBIT_GATE,
   ORBIT_GATE_WIDTH,
   orbitAmount,
+  LENS_GATE,
+  LENS_GATE_WIDTH,
+  lensAmount,
   VERTIGO_AMOUNT,
   vertigoScale,
   fovForDollyZoom,
@@ -263,5 +266,27 @@ describe('めまい(ドリーズーム)', () => {
     expect(fovForDollyZoom(50, 0)).toBe(50);
     expect(fovForDollyZoom(50, -1)).toBe(50);
     expect(fovForDollyZoom(50, Number.NaN)).toBe(50);
+  });
+});
+
+describe('重力場のゲート', () => {
+  it('第四章までは完全に閉じている', () => {
+    for (const d of [0, 2, 4, 4.5, LENS_GATE]) expect(lensAmount(d)).toBe(0);
+  });
+
+  it('5.8 で開き切り、第六章では最大のまま', () => {
+    expect(lensAmount(LENS_GATE + LENS_GATE_WIDTH)).toBe(1);
+    expect(lensAmount(6)).toBe(1);
+    expect(lensAmount(99)).toBe(1);
+  });
+
+  it('立ち上がりは線形で単調', () => {
+    expect(lensAmount(LENS_GATE + LENS_GATE_WIDTH / 2)).toBeCloseTo(0.5, 12);
+    let prev = -1;
+    for (let d = 4; d <= 6.5; d += 0.05) {
+      const a = lensAmount(d);
+      expect(a).toBeGreaterThanOrEqual(prev - 1e-12);
+      prev = a;
+    }
   });
 });

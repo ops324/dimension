@@ -14,6 +14,7 @@ import { CYAN, GOLD, cosinePalette } from '../render/palette';
 import {
   buildFrontTables,
   fovForDollyZoom,
+  lensAmount,
   orbitAmount,
   vertigoScale,
 } from './narrativeMath';
@@ -575,6 +576,13 @@ export class NarrativeScene implements Exhibit {
   /** 頂点の応答が眠っているか。0 を一度書いたら黙る(レンズと同じ作法) */
   private cursorAsleep = true;
 
+  // --- 重力場(Phase 30)--------------------------------------------------------
+  /** 図の投影半径(グループ座標)。頂点の彩色ついでに拾う */
+  private figureProjRadius = 0;
+  /** 図の見かけ半径(短辺基準 NDC)と強さ。星へ配るのは main.ts */
+  private lensNdcRadius = 0;
+  private lensAmountValue = 0;
+
   private lineBrightness = LINE_BASE_BRIGHTNESS;
   /** 縦長ドリー倍率。resize でだけ更新し、カメラリグと線幅の両方がこれを読む */
   private dolly = 1;
@@ -791,6 +799,19 @@ export class NarrativeScene implements Exhibit {
   }
 
   /**
+   * 重力場(Phase 30)。図の見かけ半径(短辺基準 NDC = 縦の半画角を 1 とする単位)。
+   * 星野へ配るのは合成の根(main.ts)── シーンは互いを知らないままにする。
+   */
+  get lensRadius(): number {
+    return this.lensNdcRadius;
+  }
+
+  /** 同・強さ ∈ [0,1]。0 のとき星の頂点シェーダーは節ごとスキップする */
+  get lensStrength(): number {
+    return this.lensAmountValue;
+  }
+
+  /**
    * 平面ごとの合成回転角(rad)。行の並びは ROTATION_PLANES と同じ。
    * **配列は使い回す** ── 読み手は値をその場で使い、参照を溜めてはいけない。
    */
@@ -860,6 +881,9 @@ export class NarrativeScene implements Exhibit {
 
     // 7) カメラリグ
     this.updateCamera(t, dt);
+
+    // 8) 重力場の場(カメラが確定したあとで測る ── 1 フレームの遅れを作らない)
+    this.updateLensField(dimLevel);
   }
 
   dispose(): void {
@@ -1392,15 +1416,48 @@ export class NarrativeScene implements Exhibit {
     }
   }
 
-  /** 頂点グローの輝度にも同じ深度キューを載せる */
+  /**
+   * 頂点グローの輝度にも同じ深度キューを載せる。
+   * ついでに図の投影半径(重力場の環を置く場所)を拾う ── 頂点は投影後の外周を
+   * 決める点なので、ここが最も安い測り場所になる(乗算 2・比較 1 / 点)。
+   */
   private shadeVertices(count: number, depthScale: number): void {
     const proj = this.pointBatch.positions;
     const brights = this.pointBatch.brights;
+    let maxR2 = 0;
     for (let v = 0; v < count; v++) {
-      const raw = (proj[v * 3 + 2] * depthScale + 1) * 0.5;
+      const o = v * 3;
+      const raw = (proj[o + 2] * depthScale + 1) * 0.5;
       const t01 = raw < 0 ? 0 : raw > 1 ? 1 : raw;
       brights[v] = 0.35 + 0.85 * t01;
+      const r2 = proj[o] * proj[o] + proj[o + 1] * proj[o + 1];
+      if (r2 > maxR2) maxR2 = r2;
     }
+    this.figureProjRadius = Math.sqrt(maxR2);
+  }
+
+  /**
+   * 重力場の場(Phase 30)。図の見かけ半径を「縦の半画角を 1 とする単位」で出す。
+   *
+   *   ndcR = (投影半径 × WORLD_SCALE) / (カメラ距離 × tan(fov/2))
+   *
+   * めまい(Phase 29)が半径と画角を同時に動かしても、この式は分母でその積を見るので
+   * **環は図に貼りついたまま**になる ── ドリーズームの最中に環だけ滑ることがない。
+   */
+  private updateLensField(dimLevel: number): void {
+    const camera = this.camera;
+    if (camera === null) return;
+
+    const amount = lensAmount(dimLevel);
+    this.lensAmountValue = amount;
+    if (amount <= 0) {
+      this.lensNdcRadius = 0;
+      return;
+    }
+    const dist = camera.position.length();
+    const halfTan = Math.tan((camera.fov * Math.PI) / 360);
+    const denom = dist * halfTan;
+    this.lensNdcRadius = denom > 1e-3 ? (this.figureProjRadius * WORLD_SCALE) / denom : 0;
   }
 
   /**
