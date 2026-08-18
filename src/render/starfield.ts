@@ -11,6 +11,14 @@ export interface Starfield {
    */
   setPixelRatio(ratio: number): void;
   /**
+   * 重力場(Phase 30)。図が背後の星を曲げる。
+   *
+   * `radius` は図の**見かけ半径**(短辺基準の NDC = 縦の半画角を 1 とする単位)、
+   * `strength` は 0..1、`aspect` は width/height。strength = 0 で頂点シェーダーの
+   * 節ごとスキップされる ── 書かない場面(ギャラリー・低次元)は 1 命令も払わない。
+   */
+  setLens(radius: number, strength: number, aspect: number): void;
+  /**
    * 星の密度スケール(1 = 全 3 層 / 0.5 = 手前の層だけ)。
    * 個々の Points の中身は触らず、遠い層から visible を落とすだけ ──
    * ジオメトリの作り直しもアロケーションも発生しない。
@@ -79,6 +87,19 @@ attribute float aBright;
 uniform float uPixelRatio;
 uniform float uAttenuation;
 
+/*
+  重力場(Phase 30)。x = 図の見かけ半径(短辺基準 NDC)、y = 強さ 0..1、z = アスペクト。
+
+  **曲げるのは星だけ**で、図には指一本触れない ── 可読性(§1 の優先順位②)を
+  「半径を調律して守る」のではなく、**触れないという構造で守る**。強さ 0 では
+  uniform 分岐ごと飛ぶので、低次元とギャラリーのコストは厳密にゼロ。
+
+  プロファイルは点質量の 1/r ではなく**環**(広がった質量に対して正しい形):
+  中心では 0 に落ち、図の縁のすぐ外で最大になり、外側へ指数で消える。
+  背景像は質量から**遠ざかる**方向へずれ、倍率のぶんだけ明るくなる。
+*/
+uniform vec3 uLens;
+
 varying float vPhase;
 varying float vBright;
 
@@ -88,6 +109,26 @@ void main() {
 
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
   gl_Position = projectionMatrix * mv;
+
+  if (uLens.y > 0.001 && gl_Position.w > 0.0) {
+    vec2 ndc = gl_Position.xy / gl_Position.w;
+    // 短辺基準へ寄せる(x に aspect を掛けると x も「縦の半画角」単位になる)
+    vec2 d = vec2(ndc.x * uLens.z, ndc.y);
+    float r = length(d);
+    float w = max(uLens.x * 0.55, 1e-4);
+    float t = (r - uLens.x) / w;
+    float g = uLens.y * exp(-t * t);
+    vec2 dir = d / max(r, 1e-4);
+    // 外向きの変位 + わずかな接線方向の引きずり(カーソルのレンズ §4.7 と同じ引用)
+    float a = g * 0.10;
+    float cs = cos(a);
+    float sn = sin(a);
+    vec2 moved = mat2(cs, sn, -sn, cs) * (d + dir * (g * uLens.x * 0.55));
+    gl_Position.xy = vec2(moved.x / max(uLens.z, 1e-4), moved.y) * gl_Position.w;
+    // 倍率のぶん明るくなる(点光源に対する重力レンズの正しい表れ方)。
+    // 変位よりも**こちらが読める** ── 星は点なので、動いたことより明るくなったことが見える
+    vBright *= 1.0 + 2.4 * g;
+  }
 
   // 遠近減衰: 層の基準半径で 1.0 になるよう正規化してある
   gl_PointSize = aSize * uPixelRatio * (uAttenuation / max(-mv.z, 1.0));
@@ -209,14 +250,20 @@ export function createStarfield(): Starfield {
   // update() 内でアロケーションしないよう uniform の参照を事前収集する
   const timeUniforms: THREE.IUniform<number>[] = [];
   const ratioUniforms: THREE.IUniform<number>[] = [];
+  const lensUniforms: THREE.IUniform<THREE.Vector3>[] = [];
   const layerPoints: THREE.Points[] = [];
 
   for (const layer of LAYERS) {
-    const { points, timeUniform, ratioUniform } = createStarLayer(layer, starColor, pixelRatio);
+    const { points, timeUniform, ratioUniform, lensUniform } = createStarLayer(
+      layer,
+      starColor,
+      pixelRatio,
+    );
     group.add(points);
     layerPoints.push(points);
     timeUniforms.push(timeUniform);
     ratioUniforms.push(ratioUniform);
+    lensUniforms.push(lensUniform);
   }
 
   const nebula = createNebula();
@@ -250,6 +297,15 @@ export function createStarfield(): Starfield {
         ratioUniforms[i].value = value;
       }
     },
+    setLens(radius: number, strength: number, aspect: number): void {
+      // NaN は 0 側へ倒す(min/max の NaN 伝播は引数順に依存するため三項で書く)
+      const s = strength > 0 ? (strength < 1 ? strength : 1) : 0;
+      const r = radius > 0 ? radius : 0;
+      const a = aspect > 0 ? aspect : 1;
+      for (let i = 0; i < lensUniforms.length; i++) {
+        lensUniforms[i].value.set(r, s, a);
+      }
+    },
     setDensity(factor: number): void {
       // 累積本数が予算を超える層から先に落とす。手前の層(最も構図に効く)は必ず残す。
       // LAYERS = [3000, 2000, 1000] なので factor=0.5 → 手前 3000 本ちょうどが残る
@@ -269,6 +325,7 @@ function createStarLayer(
   points: THREE.Points;
   timeUniform: THREE.IUniform<number>;
   ratioUniform: THREE.IUniform<number>;
+  lensUniform: THREE.IUniform<THREE.Vector3>;
 } {
   const { count, radius } = layer;
 
@@ -304,6 +361,8 @@ function createStarLayer(
 
   const timeUniform: THREE.IUniform<number> = { value: 0 };
   const ratioUniform: THREE.IUniform<number> = { value: pixelRatio };
+  // 既定は「レンズなし」。書かないかぎり頂点シェーダーの節ごとスキップされる
+  const lensUniform: THREE.IUniform<THREE.Vector3> = { value: new THREE.Vector3(0, 0, 1) };
 
   const material = new THREE.ShaderMaterial({
     uniforms: {
@@ -313,6 +372,7 @@ function createStarLayer(
       uTwinkleSpeed: { value: layer.twinkleSpeed },
       uPixelRatio: ratioUniform,
       uAttenuation: { value: radius },
+      uLens: lensUniform,
     },
     vertexShader: STAR_VERTEX_SHADER,
     fragmentShader: STAR_FRAGMENT_SHADER,
@@ -324,7 +384,7 @@ function createStarLayer(
   const points = new THREE.Points(geometry, material);
   points.name = `starfield.layer.${radius}`;
 
-  return { points, timeUniform, ratioUniform };
+  return { points, timeUniform, ratioUniform, lensUniform };
 }
 
 function createNebula(): { mesh: THREE.Mesh; timeUniform: THREE.IUniform<number> } {

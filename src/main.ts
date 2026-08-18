@@ -356,6 +356,8 @@ function bootNarrative(): void {
   // narrative も overlays も一切走らない(プラン3節)
   engine.onFrame((dt, t) => {
     if (gallery !== null && gallery.isGallery) {
+      // 展示はパラメータが主役。重力場は物語だけのものなので、ここで必ず 0 を書く
+      starfield.setLens(0, 0, 1);
       gallery.update(dt, t);
       return;
     }
@@ -364,6 +366,12 @@ function bootNarrative(): void {
     scrollDirector.update(dt);
     starfield.update(dt);
     narrative.update(dt, t);
+    /*
+      重力場(Phase 30)。図が背後の星を曲げる ── **配るのはここ 1 箇所だけ**。
+      物語シーンは星野を知らないし、星野は図を知らない。合成の根が毎フレーム
+      「いまの図の見かけ半径と強さ」を渡すことで、両者の独立を保ったまま繋ぐ。
+    */
+    starfield.setLens(narrative.lensRadius, narrative.lensStrength, engine.camera.aspect);
     overlays.update();
     rotationReadout?.update(narrative.rotationAngles, narrative.rotationOmegas);
   });
@@ -398,6 +406,7 @@ function bootNarrative(): void {
           scrollDirector.update(dt);
           starfield.update(dt);
           narrative.update(dt, t);
+          starfield.setLens(narrative.lensRadius, narrative.lensStrength, engine.camera.aspect);
           overlays.update();
           rotationReadout?.update(narrative.rotationAngles, narrative.rotationOmegas);
           // 次元の鐘も実ループと同じ順序で進める(engine.onFrame の写し)
