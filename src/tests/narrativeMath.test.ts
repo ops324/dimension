@@ -14,6 +14,11 @@ import {
   ORBIT_GATE,
   ORBIT_GATE_WIDTH,
   orbitAmount,
+  DISSOLVE_START,
+  DISSOLVE_WIDTH,
+  dissolveAmount,
+  dissolveLineFade,
+  dissolveSpread,
   SCAFFOLD_GATE,
   SCAFFOLD_GATE_WIDTH,
   scaffoldAmount,
@@ -328,5 +333,46 @@ describe('足場のゲートと密度減光', () => {
     }
     // 6 次元では 1/3 以下まで落ちる(192 本に 192 本が重なる場所)
     expect(scaffoldDensityFade(6)).toBeLessThan(0.34);
+  });
+});
+
+describe('昇華(終章)', () => {
+  it('章に入ってすぐは何も起きない(読む時間を先に置く)', () => {
+    for (const t of [0, 0.1, DISSOLVE_START]) expect(dissolveAmount(t)).toBe(0);
+  });
+
+  it('0.75 で散り切り、残りは余韻', () => {
+    expect(dissolveAmount(DISSOLVE_START + DISSOLVE_WIDTH)).toBe(1);
+    expect(dissolveAmount(0.9)).toBe(1);
+    expect(dissolveAmount(1)).toBe(1);
+  });
+
+  it('線は頂点より先に手を離す', () => {
+    // 同じ進みで比べたとき、線の残りは頂点の広がりより速く落ちる
+    expect(dissolveLineFade(0)).toBe(1);
+    expect(dissolveLineFade(1)).toBe(0);
+    expect(dissolveLineFade(0.5)).toBeLessThan(0.5);
+  });
+
+  it('頂点の広がりは種ごとに違い、いつも外向き', () => {
+    for (const seed of [0, 0.5, 0.999]) {
+      expect(dissolveSpread(0, seed)).toBe(1);
+      let prev = 1;
+      for (let a = 0; a <= 1.0001; a += 0.05) {
+        const k = dissolveSpread(a, seed);
+        expect(k).toBeGreaterThanOrEqual(prev - 1e-12);
+        prev = k;
+      }
+    }
+    expect(dissolveSpread(1, 0)).toBeLessThan(dissolveSpread(1, 1));
+  });
+
+  it('巻き戻しは厳密に逆再生(進みの純関数)', () => {
+    for (let t = 0; t <= 1.0001; t += 0.05) {
+      const a1 = dissolveAmount(t);
+      const a2 = dissolveAmount(t);
+      expect(dissolveSpread(a1, 0.3)).toBe(dissolveSpread(a2, 0.3));
+      expect(dissolveLineFade(a1)).toBe(dissolveLineFade(a2));
+    }
   });
 });
