@@ -2,6 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { rotateBatch, type PlaneRotation } from '../math/rotation';
 import {
+  FRONT_BASE,
+  FRONT_BOOST,
+  FRONT_LEAD,
+  FRONT_SIGMA,
+  birthEnvelope,
+  buildFrontTables,
+  frontPosition,
   ORBIT_FADE_START,
   ORBIT_FADE_WIDTH,
   ORBIT_GATE,
@@ -111,5 +118,89 @@ describe('等傾二重回転の軌道(物語の第四章)', () => {
     const r2 = source.reduce((acc, v) => acc + v * v, 0);
     const fixed = source[4] * source[4] + source[5] * source[5];
     expect(dot).not.toBeCloseTo((r2 - fixed) * Math.cos(0.7) + fixed, 6);
+  });
+});
+
+describe('buildFrontTables(波面)', () => {
+  const SUBDIV = 16;
+  const mix = new Float64Array(SUBDIV + 1);
+  const boost = new Float64Array(SUBDIV + 1);
+  /** 表と同じ閉形式。実装が式から離れていないことを縛る */
+  const gauss = (u: number, e: number): number => {
+    const d = (u - Math.min(1, e * FRONT_LEAD)) / FRONT_SIGMA;
+    return Math.exp(-d * d);
+  };
+
+  it('プラトーでは 1 要素も光らず、明るさも素通し(包絡が 0)', () => {
+    for (const e of [0, 1]) {
+      buildFrontTables(mix, boost, e, SUBDIV);
+      for (let s = 0; s <= SUBDIV; s++) {
+        expect(mix[s]).toBe(0);
+        expect(boost[s]).toBe(1);
+      }
+    }
+    expect(birthEnvelope(0)).toBe(0);
+    expect(birthEnvelope(1)).toBe(0);
+    expect(birthEnvelope(0.5)).toBe(1);
+  });
+
+  it('閉形式と一致する', () => {
+    for (const e of [0.13, 0.5, 0.77, 0.96]) {
+      const env = birthEnvelope(e);
+      buildFrontTables(mix, boost, e, SUBDIV);
+      for (let s = 0; s <= SUBDIV; s++) {
+        const g = gauss(s / SUBDIV, e);
+        expect(mix[s]).toBeCloseTo(env * (FRONT_BASE + (1 - FRONT_BASE) * g), 12);
+        expect(boost[s]).toBeCloseTo(1 + FRONT_BOOST * env * g, 12);
+      }
+    }
+  });
+
+  it('前線は extent より少しだけ先を走り、e=0.8 で向こう側のコピーへ着く', () => {
+    for (const e of [0.2, 0.4, 0.6, 0.8, 0.95]) {
+      buildFrontTables(mix, boost, e, SUBDIV);
+      let peak = 0;
+      for (let s = 1; s <= SUBDIV; s++) if (mix[s] > mix[peak]) peak = s;
+      expect(Math.abs(peak / SUBDIV - frontPosition(e))).toBeLessThanOrEqual(0.5 / SUBDIV + 1e-9);
+    }
+    expect(frontPosition(0.8)).toBe(1);
+    expect(frontPosition(1)).toBe(1);
+    expect(frontPosition(0)).toBe(0);
+  });
+
+  it('混色比は包絡を超えず、下駄を下回らない', () => {
+    for (const e of [0.05, 0.3, 0.5, 0.9]) {
+      const env = birthEnvelope(e);
+      buildFrontTables(mix, boost, e, SUBDIV);
+      for (let s = 0; s <= SUBDIV; s++) {
+        expect(mix[s]).toBeLessThanOrEqual(env + 1e-12);
+        expect(mix[s]).toBeGreaterThanOrEqual(env * FRONT_BASE - 1e-12);
+        expect(boost[s]).toBeGreaterThanOrEqual(1);
+        expect(boost[s]).toBeLessThanOrEqual(1 + FRONT_BOOST * env + 1e-12);
+      }
+    }
+  });
+
+  it('ゴールドの総量は一様フラッシュより少ない(既知の罠 #6 に対して安全側)', () => {
+    // 「一様」= 旧実装で、辺のどこでも混色比が env だった状態
+    for (const e of [0.3, 0.5, 0.7]) {
+      const env = birthEnvelope(e);
+      buildFrontTables(mix, boost, e, SUBDIV);
+      let energy = 0;
+      for (let s = 0; s <= SUBDIV; s++) energy += mix[s] * boost[s];
+      const mean = energy / (SUBDIV + 1);
+      expect(mean).toBeLessThan(env);
+    }
+  });
+
+  it('前線の位置は extent に対して単調に進む(巻き戻せる)', () => {
+    let prev = -1;
+    for (let e = 0.05; e <= 0.95; e += 0.05) {
+      buildFrontTables(mix, boost, e, SUBDIV);
+      let peak = 0;
+      for (let s = 1; s <= SUBDIV; s++) if (mix[s] > mix[peak]) peak = s;
+      expect(peak).toBeGreaterThanOrEqual(prev);
+      prev = peak;
+    }
   });
 });
