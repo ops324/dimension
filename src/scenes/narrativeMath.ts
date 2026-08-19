@@ -291,3 +291,30 @@ export function dissolveSpread(amount: number, seed: number): number {
   const t = Math.pow(clamp01(amount), DISSOLVE_EASE);
   return 1 + (DISSOLVE_SPREAD + DISSOLVE_SPREAD_RANDOM * seed) * t;
 }
+
+/* ------------------------------------------------- 深度シェード(Phase 35 / 提案 A1)
+
+   Phase 34 まで、深度が語られるのは **色だけ** だった ── `shade = 0.55 + 0.35·t01`。
+   A1 で線幅を ±20% 振ることにしたので、そのぶん色の傾きを緩めて幅へ移す。
+   製図の作法そのもの: 手前の線は太く濃く、奥の線は細く淡い。
+
+   ここに置く理由は、この係数が **幅とセットでしか意味を持たない** から。
+   片方だけ動かすと「太いのに暗い線」や「細いのに明るい線」ができ、深度の手がかりが
+   互いに打ち消す。組で試験に載せる(depthWidth.test.ts の「インク総量」)。
+
+     旧: 0.55 → 0.90(近/遠の比 1.64)、幅 2.6px 固定
+     新: 0.63 → 0.84 × 幅 0.80〜1.20(近/遠の**インク量**の比 2.00)
+
+   `shade` はゴールド LUT(波面)にも同じ係数で掛かるので、前線の見え方も同じ比で動く。 */
+
+/** 旧実装の係数。総量が離れていないことを試験で縛るための基準点 */
+export const LEGACY_SHADE_BASE = 0.55;
+export const LEGACY_SHADE_SPAN = 0.35;
+
+export const DEPTH_SHADE_BASE = 0.63;
+export const DEPTH_SHADE_SPAN = 0.21;
+
+/** 深度 t01 ∈ [0,1](1 = 手前)→ 線の明度係数 */
+export function depthShade(t01: number): number {
+  return DEPTH_SHADE_BASE + DEPTH_SHADE_SPAN * clamp01(t01);
+}
