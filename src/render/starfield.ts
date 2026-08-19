@@ -37,8 +37,12 @@ interface LayerConfig {
 }
 
 // 近/中/遠の 3 層。遠いほど小さく暗く、瞬きもゆっくり。
-// brightness は「星色 #cdd6ff の輝度係数 0.683 を掛けた値がブルーム閾値 0.1 を
-// 下回る」ように選んである(典型星は非発光、スパークルの 1/4 だけが閾値を超える)。
+// brightness は「星色 #cdd6ff の輝度係数 0.683 を掛けた値がブルーム閾値を
+// 下回る」ように選んである。閾値の持ち主は postfx.ts の
+// DEFAULT_BLOOM_THRESHOLD で、Phase 11 に 0.1 → 0.28 へ上がった(ベール光の除去)。
+// いま最も明るい星でも 0.155 × 1.35(スパークル上限) × 0.683 = 0.143 なので、
+// **星は 1 粒もブルームを起こさない** ── 閾値 0.1 の頃はスパークルだけが超えていた。
+// この行は Phase 8 の値のまま古かった(Phase 34a で実測に合わせた)。
 const LAYERS: readonly LayerConfig[] = [
   { count: 3000, radius: 40, size: 3.0, brightness: 0.155, twinkleSpeed: 1.7 },
   { count: 2000, radius: 55, size: 2.3, brightness: 0.115, twinkleSpeed: 1.15 },
@@ -48,7 +52,7 @@ const LAYERS: readonly LayerConfig[] = [
 /** 星は青白。ColorManagement が有効なので Color は線形値として uniform に載る */
 const STAR_COLOR = 0xcdd6ff;
 
-/** 全体の 1/4 だけ明るくしてスパークルを作る(輝度上限 0.26 * 1.35 ≒ 0.35) */
+/** 全体の 1/4 だけ明るくしてスパークルを作る(近層の上限 0.155 * 1.35 ≒ 0.21) */
 const SPARKLE_RATIO = 0.25;
 const SPARKLE_GAIN = 1.35;
 
