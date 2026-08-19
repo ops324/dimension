@@ -208,6 +208,13 @@ export const CHAPTERS: readonly Chapter[] = [
 /** 章ごとの目標 dimLevel(scrollDirector へ渡す。毎フレーム再構築しないよう定数化) */
 export const CHAPTER_DIMS: readonly number[] = CHAPTERS.map((c) => c.dim);
 
+/**
+ * 章ごとの役割。階段(`core/detents.ts`)が段の置き方を決めるのに使う
+ * ── 序章は「読む位置」の段を持たず、終章は踊り場を持たない。
+ * 毎フレーム再構築しないよう定数化する(`CHAPTER_DIMS` と同じ理由)。
+ */
+export const CHAPTER_ROLES: readonly ChapterRole[] = CHAPTERS.map((c) => c.role);
+
 /* --------------------------------------------------------------------- GALLERY */
 
 /**
