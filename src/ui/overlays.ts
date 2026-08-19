@@ -1,5 +1,6 @@
 import type { ScrollDirector } from '../core/scrollDirector';
 import type { Chapter } from './content';
+import { chapterMove, thresholdsFor } from './chapterThresholds';
 import type { Announcer } from './components/Announcer';
 import { DUR, EASE, cancelAll, play } from './components/component';
 import {
@@ -38,15 +39,6 @@ const FONT_TIMEOUT_MS = 2500;
 const START_TIMEOUT_MS = 6000;
 
 /* --------------------------------------------------------------- 振り付けの尺 */
-
-/** 章に入ったと見なす localT。0.02 まで巻き戻すと出る(ヒステリシス) */
-const IN_T = 0.06;
-const BACK_T = 0.02;
-/** 章から出る localT(役割ごと) */
-const OUT_T_CHAPTER = 0.86;
-const OUT_T_PROLOGUE = 0.72;
-/** エピローグは CTA を押せる状態のまま最後まで残す = 出ない */
-const OUT_T_NEVER = 2;
 
 /** 英字ディスプレイ: 1 文字ごとの遅延(ms) */
 const CHAR_STAGGER = 24;
@@ -231,9 +223,28 @@ export function buildNarrativeDOM(root: HTMLElement, chapters: readonly Chapter[
 
     pin.append(inner, caption);
 
-    // 流れる帯は序章と終章だけ(章のあいだは静かに保つ)
-    if (chapter.role === 'prologue') pin.append(makeMarquee(MARQUEE_PROLOGUE));
-    else if (chapter.role === 'epilogue') pin.append(makeMarquee(MARQUEE_EPILOGUE));
+    /*
+      流れる帯は序章と終章だけ(章のあいだは静かに保つ)。
+
+      **tail に入れる**(Phase 34a)。ここに入れていなかったあいだ、帯は
+      hideChapter にも applyHidden にも一度も触られず、序章が退いたあとも
+      残り続けていた ── 序章の「図だけ」の区間は、実際には「図 + 帯」だった。
+      終章は OUT_T_NEVER で退かないので、そちらの見た目は変わらない。
+
+      .mq 自身の不透明度は 1(濃度 0.14 は中の .mq-half が持つ)なので、
+      tail の一斉フェード 1 → 0 にそのまま乗る。
+    */
+    const marqueeText =
+      chapter.role === 'prologue'
+        ? MARQUEE_PROLOGUE
+        : chapter.role === 'epilogue'
+          ? MARQUEE_EPILOGUE
+          : null;
+    if (marqueeText !== null) {
+      const marquee = makeMarquee(marqueeText);
+      pin.append(marquee);
+      tail.push(marquee);
+    }
 
     section.append(pin);
     fragment.append(section);
@@ -284,10 +295,12 @@ export class Overlays {
   /** 章ごとの状態と、そのとき走っているアニメーション */
   private readonly states: Uint8Array;
   private readonly anims: Animation[][];
-  /** 章ごとの入退場しきい値(役割で変わる) */
+  /** 章ごとの入退場しきい値(役割で変わる。値の持ち主は chapterThresholds.ts) */
   private readonly inT: Float64Array;
   private readonly outT: Float64Array;
   private readonly backT: Float64Array;
+  /** 出たあと、ここまで戻ってはじめて出直す(出側のヒステリシス) */
+  private readonly backOutT: Float64Array;
 
   /** 分割ハンドル(章 × 3 種)。生成時に確定し、リサイズでのみ作り直す */
   private readonly enSplits: SplitHandle[] = [];
@@ -325,28 +338,16 @@ export class Overlays {
     this.inT = new Float64Array(n);
     this.outT = new Float64Array(n);
     this.backT = new Float64Array(n);
+    this.backOutT = new Float64Array(n);
 
     for (let i = 0; i < n; i++) {
       this.anims.push([]);
-      switch (chapters[i].role) {
-        case 'prologue':
-          // ページ最上部(localT = 0)で読めていなければならないので入りの敷居は 0。
-          // 巻き戻しでは消さない(戻る先がない)
-          this.inT[i] = 0;
-          this.outT[i] = OUT_T_PROLOGUE;
-          this.backT[i] = -1;
-          break;
-        case 'epilogue':
-          this.inT[i] = IN_T;
-          this.outT[i] = OUT_T_NEVER;
-          this.backT[i] = BACK_T;
-          break;
-        default:
-          this.inT[i] = IN_T;
-          this.outT[i] = OUT_T_CHAPTER;
-          this.backT[i] = BACK_T;
-          break;
-      }
+      // オブジェクトを作るのは構築時のここだけ。毎フレームの判定は数しか触らない
+      const th = thresholdsFor(chapters[i].role);
+      this.inT[i] = th.inT;
+      this.outT[i] = th.outT;
+      this.backT[i] = th.backT;
+      this.backOutT[i] = th.backOutT;
     }
 
     this.hudValue = document.getElementById('hud-value');
@@ -414,13 +415,18 @@ export class Overlays {
 
     if (this.armed) {
       for (let i = 0; i < this.states.length; i++) {
-        const t = locals[i];
         const state = this.states[i];
-        if (state === ChapterState.Hidden || state === ChapterState.Hiding) {
-          if (t >= this.inT[i] && t <= this.outT[i]) this.revealChapter(i);
-        } else if (t > this.outT[i] || t < this.backT[i]) {
-          this.hideChapter(i);
-        }
+        const shown = state === ChapterState.Revealing || state === ChapterState.Shown;
+        const move = chapterMove(
+          shown,
+          locals[i],
+          this.inT[i],
+          this.backT[i],
+          this.outT[i],
+          this.backOutT[i],
+        );
+        if (move === 1) this.revealChapter(i);
+        else if (move === -1) this.hideChapter(i);
       }
     }
 
