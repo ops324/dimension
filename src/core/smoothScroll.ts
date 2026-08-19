@@ -17,6 +17,15 @@ import type { ChapterRole } from '../ui/content';
  * - 外部で位置が動いたら(タッチ・`scrollTo`・ブラウザの復元)、次のフレームで
  *   検出して再同期する ── 「自分が最後に書いた値」と実測の差だけを見る。
  *
+ * タッチ(Phase 34g):
+ * - **慣性は一切奪わない**(リスナはすべて passive)。iOS のものが最良で、
+ *   横取りすると Phase 24 が避けた事故がそのまま戻る。
+ * - 足したのは 1 点だけ ── **`scrollend`(= 指が離れ、慣性も終わった)を受けて、
+ *   止まった場所が段の受け持ちに入っていたら 1 回だけ寄せる**。
+ *   iOS は慣性の最中に `scrollTo` を書くと慣性を切ってしまうので、
+ *   「その 1 点でしか書かない」ことが安全の中身になっている。
+ * - `scrollend` が無い環境(Safari 26.2 未満)では**何もしない**。
+ *
  * 触らないもの:
  * - `mode-gallery` の間は完全に沈黙する(ホイールは OrbitControls のドリー)。
  * - `prefers-reduced-motion: reduce` ではリスナーすら張らない。慣性は
@@ -81,6 +90,20 @@ const focusIsIdle = (): boolean => {
 /** ページ送りのキー。段があるときは「次の段へ」に読み替える */
 const isPageKey = (key: string): boolean =>
   key === 'PageDown' || key === 'PageUp' || key === ' ' || key === 'Spacebar';
+
+/**
+ * `scrollend` を持っているか(Phase 34g)。
+ *
+ * **タッチで「指が離れ、慣性も終わった」を知る唯一の合図**である。
+ * Chrome 114(2023-05)/ Firefox 109(2023-01)/ **Safari 26.2(2025-12)** 以降。
+ * 無い環境では**何もしない** ── 機能を減らすのではなく、ブラウザへ返す
+ * (`prefers-reduced-motion` に対する既存方針と同じ筋)。
+ *
+ * デスクトップでは使えない: 自分が rAF で `scrollTo` を書いているので、
+ * `scrollend` は「自分の書き込みが止まった」を報せるだけになり、
+ * 寄せ直すと自己ループを作る。だから**直前の入力がタッチだったときだけ**見る。
+ */
+const SCROLLEND_SUPPORTED = 'onscrollend' in window;
 
 export interface SmoothScrollOptions {
   /**
@@ -173,6 +196,49 @@ export const createSmoothScroll = (options: SmoothScrollOptions = {}): SmoothScr
     track?.reset(y);
   };
 
+  /* ------------------------------------------------ タッチの階段(Phase 34g) */
+
+  /** 指がガラスに乗っているか。慣性中は false になる(その間は絶対に書かない) */
+  let touchActive = false;
+  /** 直前の入力がタッチだったか。**自分の rAF 書き込みに反応しないための鍵** */
+  let lastInputWasTouch = false;
+  /** 自分が投げた寄せの `scrollend` を、次の寄せの合図と取り違えないための札 */
+  let snapping = false;
+
+  const onTouchStart = (): void => {
+    touchActive = true;
+    lastInputWasTouch = true;
+    // 読者が触ったら、走っている寄せは読者のものではなくなる
+    snapping = false;
+  };
+
+  const onTouchEnd = (event: TouchEvent): void => {
+    // 2 本目以降が残っていれば、まだ触れている
+    touchActive = event.touches.length > 0;
+  };
+
+  /**
+   * 指が離れて慣性も終わった。**ここでだけ、1 回だけ書く。**
+   *
+   * iOS は慣性の**最中**に `scrollTo` を書くと慣性そのものを切ってしまう
+   * (macOS とは逆の既知問題)。`scrollend` は定義上その後なので、
+   * この 1 点でしか書かないことが安全の中身になっている。
+   */
+  const onScrollEnd = (): void => {
+    if (track === null || !lastInputWasTouch || touchActive || !inNarrative()) return;
+    // 自分が投げた寄せの完了通知。ここで寄せ直すと自己ループになる
+    if (snapping) {
+      snapping = false;
+      return;
+    }
+    measureIfStale();
+    refreshDetents();
+    const to = track.snapTarget(window.scrollY);
+    if (to === null) return;
+    snapping = true;
+    window.scrollTo({ top: to, behavior: 'smooth' });
+  };
+
   /** 自分が最後に書いた位置。実測との差が外部スクロールの検出そのもの */
   let written = window.scrollY;
   /** 前回 scrollMax() を読んでからの経過(秒) */
@@ -212,6 +278,8 @@ export const createSmoothScroll = (options: SmoothScrollOptions = {}): SmoothScr
 
     measureIfStale();
     event.preventDefault();
+    // 以後の scrollend は**自分の rAF 書き込み**なので、寄せの合図に使ってはいけない
+    lastInputWasTouch = false;
     pushInput(normalizeWheel(event.deltaY, event.deltaMode, viewportHeight()));
   };
 
@@ -226,6 +294,7 @@ export const createSmoothScroll = (options: SmoothScrollOptions = {}): SmoothScr
     if (intent === null) return;
 
     event.preventDefault();
+    lastInputWasTouch = false;
     if (!('delta' in intent)) {
       toInput(intent.to);
     } else if (isPageKey(event.key)) {
@@ -239,6 +308,17 @@ export const createSmoothScroll = (options: SmoothScrollOptions = {}): SmoothScr
   if (!reduceMotion) {
     window.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('keydown', onKeyDown);
+    /*
+      タッチは**何も奪わない**(passive)。ネイティブの慣性は iOS のものが最良で、
+      ここが横取りすると Phase 24 が避けた事故がそのまま戻る。
+      足すのは「止まったあとに 1 回だけ寄せる」経路だけ。
+    */
+    if (track !== null && SCROLLEND_SUPPORTED) {
+      window.addEventListener('touchstart', onTouchStart, { passive: true });
+      window.addEventListener('touchend', onTouchEnd, { passive: true });
+      window.addEventListener('touchcancel', onTouchEnd, { passive: true });
+      window.addEventListener('scrollend', onScrollEnd);
+    }
   }
 
   return {
@@ -278,6 +358,10 @@ export const createSmoothScroll = (options: SmoothScrollOptions = {}): SmoothScr
     dispose(): void {
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('touchstart', onTouchStart);
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
+      window.removeEventListener('scrollend', onScrollEnd);
     },
   };
 };

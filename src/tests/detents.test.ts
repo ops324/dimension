@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   DETENT_RELEASE,
+  DETENT_SNAP_EPSILON,
   DetentTrack,
   EPILOGUE_STOP_T,
   buildDetents,
@@ -350,5 +351,73 @@ describe('DetentTrack ── 踏み面は連続、蹴上げは 1 段', () => {
     for (let i = 1; i < reads.length - 1; i++) {
       expect(reads[i] - reads[i - 1]).toBeCloseTo(2.2 * H, 6);
     }
+  });
+});
+
+describe('snapTarget ── タッチ(指が離れて慣性も終わったあと)', () => {
+  it('踏み面では何もしない ── 読者が図を見て止まった場所は動かさない', () => {
+    const { track } = trackOf();
+    // モーフの最中、波面のピーク
+    expect(track.snapTarget(at(1, 0.2))).toBeNull();
+    // 読んでいる最中
+    expect(track.snapTarget(at(1, 0.5))).toBeNull();
+    // 次章に入った直後
+    expect(track.snapTarget(at(2, 0.1))).toBeNull();
+  });
+
+  it('踊り場の前半で止まったら「図だけ」の位置へ', () => {
+    const { track, detents } = trackOf();
+    const fig = detents.find((d) => d.from === at(1, 0.86)) as Detent;
+    expect(track.snapTarget(fig.at + 40)).toBeCloseTo(fig.at, 6);
+    expect(track.snapTarget(fig.from + 5)).toBeCloseTo(fig.at, 6);
+  });
+
+  it('踊り場の後半で止まったら、次章の文字が立つ位置へ送る', () => {
+    const { track, detents } = trackOf();
+    const fig = detents.find((d) => d.from === at(1, 0.86)) as Detent;
+    expect(track.snapTarget(fig.to - 40)).toBeCloseTo(fig.to, 6);
+    // 中点のすぐ先
+    expect(track.snapTarget((fig.at + fig.to) / 2 + 1)).toBeCloseTo(fig.to, 6);
+  });
+
+  it('もう段に居るなら何もしない ── 自分の寄せが生む scrollend でループしない', () => {
+    const { track, detents } = trackOf();
+    const fig = detents.find((d) => d.from === at(1, 0.86)) as Detent;
+    expect(track.snapTarget(fig.at)).toBeNull();
+    // scrollTo の着地は端末画素へ丸められる。その幅では動かない
+    expect(track.snapTarget(fig.at + DETENT_SNAP_EPSILON - 0.5)).toBeNull();
+    expect(track.snapTarget(fig.at - DETENT_SNAP_EPSILON + 0.5)).toBeNull();
+  });
+
+  it('読む位置の受け持ちの後半は、解き直して踊り場の着地点まで行く(境界で止まらない)', () => {
+    const { track, detents } = trackOf();
+    const outY = at(1, 0.86);
+    const read = detents.find((d) => d.to === outY) as Detent;
+    const fig = detents.find((d) => d.from === outY) as Detent;
+    // 読む位置の受け持ち [read.at, outY) の後半 → outY へ → そこは踊り場の前半 → fig.at
+    expect(track.snapTarget(outY - 5)).toBeCloseTo(fig.at, 6);
+    // 前半なら読む位置そのもの
+    expect(track.snapTarget(read.at + 5)).toBeCloseTo(read.at, 6);
+  });
+
+  it('終章の段でも同じ ── 前半なら昇華の完了点、後半なら末尾', () => {
+    const { track, max } = trackOf();
+    const stop = at(8, EPILOGUE_STOP_T);
+    expect(track.snapTarget(stop + 20)).toBeCloseTo(stop, 6);
+    expect(track.snapTarget(max - 20)).toBeCloseTo(max, 6);
+  });
+
+  it('上限と下限を超えない', () => {
+    const { track, max } = trackOf();
+    const v = track.snapTarget(max);
+    expect(v === null || (v >= 0 && v <= max)).toBe(true);
+    const w = track.snapTarget(0);
+    expect(w === null || (w >= 0 && w <= max)).toBe(true);
+  });
+
+  it('段が無ければ(表が空)何もしない', () => {
+    const t = new DetentTrack();
+    t.setDetents([], 10000);
+    expect(t.snapTarget(1234)).toBeNull();
   });
 });

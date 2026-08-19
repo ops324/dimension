@@ -60,6 +60,14 @@ export const DETENT_RELEASE = ARROW_STEP;
  */
 export const EPILOGUE_STOP_T = 0.75;
 
+/**
+ * タッチの寄せを「もう着いている」と見なす幅(px)。
+ * `scrollTo` の着地は端末画素へ丸められるので、これが無いと
+ * **自分の寄せが生んだ `scrollend` に反応して寄せ直す無限ループ**になる。
+ * `RESYNC_EPSILON` と同じ 2px。
+ */
+export const DETENT_SNAP_EPSILON = 2;
+
 /** 停留所 1 つ。`from` 以上 `to` 未満へ入ろうとした目標は `at` に着地する */
 export interface Detent {
   readonly at: number;
@@ -225,6 +233,34 @@ export class DetentTrack {
       if (best === null || (dir > 0 ? at < best : at > best)) best = at;
     }
     this.land(best ?? (dir > 0 ? this.maxY : 0));
+  }
+
+  /**
+   * **タッチ用**(Phase 34g)。指が離れて慣性も終わった位置 `y` から、
+   * 落ち着かせるべき位置を返す。落ち着かせる必要が無ければ null。
+   *
+   * ホイールと違い、タッチは「1 回の入力」の粒度が無い ── 1 スワイプが
+   * 1〜2 画面ぶん飛ぶ。そこで**止まった場所が段の受け持ち範囲に入っていたときだけ**、
+   * その範囲の両端(着地点 `at` と出口 `to`)の**近いほう**へ寄せる。
+   *
+   * - **踏み面(章の中)では何もしない。** 読者が図を見て止まった場所は動かさない ──
+   *   波面のピークで止まる自由は、タッチでも奪わない
+   * - 前半なら `at`(= 図だけの位置)、後半なら `to`(= 次章の文字が立つ位置)。
+   *   文字が消えた直後で止まった読者は前半に入るので「図のみ」に落ち着き、
+   *   勢いで越えた読者は先へ送られる
+   * - 寄せ先がまた別の段の受け持ちに入る場合(読む位置 → 踊り場)は解き直す。
+   *   境界は半開区間なので、この反復は数回で必ず止まる
+   */
+  snapTarget(y: number): number | null {
+    let t = clamp(y, 0, this.maxY);
+    for (let i = 0; i < 4; i++) {
+      const d = this.findDetent(t);
+      if (d === null) break;
+      const next = t < (d.at + d.to) / 2 ? d.at : d.to;
+      if (next === t) break;
+      t = clamp(next, 0, this.maxY);
+    }
+    return Math.abs(t - y) < DETENT_SNAP_EPSILON ? null : t;
   }
 
   /** 目標を y へ置く。段の受け持ち範囲に入るなら、そこへ着地して捕まる */
