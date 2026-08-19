@@ -35,10 +35,17 @@ export class ScrollDirector {
   private readonly sections: readonly HTMLElement[];
   /** 章ごとの目標 dimLevel */
   private readonly dims: Float64Array;
-  /** 章の開始スクロール位置(ドキュメント座標) */
-  private readonly starts: Float64Array;
-  /** 章のスクラブ可能長 = max(1, セクション高 − ビューポート高) */
-  private readonly lens: Float64Array;
+  /**
+   * 章の開始スクロール位置(ドキュメント座標)。
+   * **読み取り専用として扱うこと**(`chapterLocals` と同じ規約)。
+   * 階段(`detents.ts`)が段の位置をここから導く。
+   */
+  readonly starts: Float64Array;
+  /**
+   * 章のスクラブ可能長 = max(1, セクション高 − ビューポート高)。
+   * **読み取り専用として扱うこと**。
+   */
+  readonly lens: Float64Array;
   /**
    * 章ごとの localT ∈ [0,1]。overlays が全章のフェードを駆動するために使う。
    * **読み取り専用として扱うこと**(TypedArray に readonly 修飾はできないため規約で担保)。
@@ -47,6 +54,14 @@ export class ScrollDirector {
 
   private scrollMax = 1;
   private viewportHeight = 1;
+  /**
+   * 実測の版。`remeasure()` のたびに 1 つ進む。
+   * 階段はこれを見て段の表を組み直す ── `remeasure()` の呼び出し点は 6 箇所
+   * (生成 / 初回フレーム / `overlays.start()` / `fonts.ready` / resize /
+   * ギャラリー退場)あり、そのうち 2 つは `Overlays` の内側なので、
+   * 「呼ばれたら教える」ではなく「変わったかを見る」ほうが取りこぼさない。
+   */
+  private epoch = 0;
 
   private activeIndex = 0;
   private activeLocalT = 0;
@@ -135,6 +150,17 @@ export class ScrollDirector {
     }
 
     this.scrollMax = Math.max(1, document.documentElement.scrollHeight - vh);
+    this.epoch++;
+  }
+
+  /** スクロールの上限(px)。段の表を組むときに要る */
+  get scrollLimit(): number {
+    return this.scrollMax;
+  }
+
+  /** 実測の版。変わっていたら段の表を組み直す合図 */
+  get measureEpoch(): number {
+    return this.epoch;
   }
 
   /**

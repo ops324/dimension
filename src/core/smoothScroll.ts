@@ -1,4 +1,8 @@
+import { DetentTrack, buildDetents, type ChapterSpan } from './detents';
+import type { ScrollDirector } from './scrollDirector';
 import { ScrollGlide, keyIntent, normalizeWheel } from './scrollGlide';
+import { thresholdsFor } from '../ui/chapterThresholds';
+import type { ChapterRole } from '../ui/content';
 
 /**
  * ホイール / キーボードのスクロールを滑走させる層(Phase 24)。
@@ -74,12 +78,100 @@ const focusIsIdle = (): boolean => {
   return el === null || el === document.body || el === document.documentElement;
 };
 
-export const createSmoothScroll = (): SmoothScroll => {
+/** ページ送りのキー。段があるときは「次の段へ」に読み替える */
+const isPageKey = (key: string): boolean =>
+  key === 'PageDown' || key === 'PageUp' || key === ' ' || key === 'Spacebar';
+
+export interface SmoothScrollOptions {
+  /**
+   * 階段(Phase 34e)。**`director` と `roles` が両方揃ったときだけ**働く ──
+   * 単独展示ブートやテストでは省略でき、そのとき挙動は Phase 24 のままになる。
+   */
+  readonly director?: ScrollDirector;
+  readonly roles?: readonly ChapterRole[];
+}
+
+export const createSmoothScroll = (options: SmoothScrollOptions = {}): SmoothScroll => {
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
   const glide = new ScrollGlide();
   glide.setMax(scrollMax());
   glide.reset(window.scrollY);
+
+  const director = options.director ?? null;
+  const roles = options.roles ?? null;
+  /** 段。無ければ Phase 24 のまま(目標は glide が直に持つ) */
+  const track = director !== null && roles !== null ? new DetentTrack() : null;
+  track?.reset(window.scrollY);
+  /** 段の表を組んだときの実測の版。−1 は「まだ組んでいない」 */
+  let detentEpoch = -1;
+  /** 使い回す作業配列(入力のたびに 9 個のオブジェクトを作らない) */
+  const spans: ChapterSpan[] = [];
+
+  /**
+   * 段の表を、**実測が変わっていたら**組み直す。
+   * 入力のたびに数の比較 1 回だけ通る ── `remeasure()` の呼び出し点は 6 箇所あり、
+   * うち 2 つは `Overlays` の内側なので「呼ばれたら教える」では取りこぼす。
+   */
+  const refreshDetents = (): void => {
+    if (track === null || director === null || roles === null) return;
+    if (director.measureEpoch === detentEpoch) return;
+    detentEpoch = director.measureEpoch;
+
+    spans.length = 0;
+    for (let i = 0; i < roles.length; i++) {
+      const th = thresholdsFor(roles[i]);
+      spans.push({
+        start: director.starts[i],
+        lens: director.lens[i],
+        inT: th.inT,
+        outT: th.outT,
+        backOutT: th.backOutT,
+        // 序章は「読む位置」の段を持たない(スクラブ長 30svh に粒度が無い)
+        hasRead: roles[i] !== 'prologue',
+      });
+    }
+    track.setDetents(buildDetents(spans, director.scrollLimit), director.scrollLimit);
+  };
+
+  /** 相対入力。段があれば段が目標を決め、無ければ glide が直に積む */
+  const pushInput = (delta: number): void => {
+    if (track === null) {
+      glide.push(delta);
+      return;
+    }
+    refreshDetents();
+    track.push(delta);
+    glide.to(track.target);
+  };
+
+  /** 絶対入力(Home / End)。**段は素通りする** ── 端へ行けなくなってはいけない */
+  const toInput = (y: number): void => {
+    if (track === null) {
+      glide.to(y);
+      return;
+    }
+    refreshDetents();
+    track.to(y);
+    glide.to(track.target);
+  };
+
+  /** ページ送り。段があるときは「次の段へ」 ── キーボードだけが取り残されない */
+  const pageInput = (dir: 1 | -1, delta: number): void => {
+    if (track === null) {
+      glide.push(delta);
+      return;
+    }
+    refreshDetents();
+    track.stepDetent(dir);
+    glide.to(track.target);
+  };
+
+  /** 外部要因での位置変化。段には吸わせない(読者が置いた位置を動かさない) */
+  const resyncTo = (y: number): void => {
+    glide.reset(y);
+    track?.reset(y);
+  };
 
   /** 自分が最後に書いた位置。実測との差が外部スクロールの検出そのもの */
   let written = window.scrollY;
@@ -88,6 +180,9 @@ export const createSmoothScroll = (): SmoothScroll => {
 
   const remeasure = (): void => {
     glide.setMax(scrollMax());
+    // 段の表も組み直す。呼び出し側(main.ts)は scrollDirector.remeasure() を
+    // **先に**呼ぶので、ここで読む starts / lens は必ず新しい
+    refreshDetents();
     sinceMeasure = 0;
   };
 
@@ -97,7 +192,7 @@ export const createSmoothScroll = (): SmoothScroll => {
   };
 
   const sync = (): void => {
-    glide.reset(window.scrollY);
+    resyncTo(window.scrollY);
     written = glide.value;
   };
 
@@ -117,7 +212,7 @@ export const createSmoothScroll = (): SmoothScroll => {
 
     measureIfStale();
     event.preventDefault();
-    glide.push(normalizeWheel(event.deltaY, event.deltaMode, viewportHeight()));
+    pushInput(normalizeWheel(event.deltaY, event.deltaMode, viewportHeight()));
   };
 
   const onKeyDown = (event: KeyboardEvent): void => {
@@ -131,8 +226,14 @@ export const createSmoothScroll = (): SmoothScroll => {
     if (intent === null) return;
 
     event.preventDefault();
-    if ('delta' in intent) glide.push(intent.delta);
-    else glide.to(intent.to);
+    if (!('delta' in intent)) {
+      toInput(intent.to);
+    } else if (isPageKey(event.key)) {
+      // Space / PageUp / PageDown は「次の段へ」。段が無ければ従来どおり 0.9 画面
+      pageInput(intent.delta >= 0 ? 1 : -1, intent.delta);
+    } else {
+      pushInput(intent.delta);
+    }
   };
 
   if (!reduceMotion) {
@@ -150,7 +251,7 @@ export const createSmoothScroll = (): SmoothScroll => {
       const y = window.scrollY > 0 ? window.scrollY : 0;
       // 外部(タッチ・スクロールバー・scrollTo・ブラウザの復元)が動かした
       if (Math.abs(y - written) > RESYNC_EPSILON) {
-        glide.reset(y);
+        resyncTo(y);
         written = y;
         return;
       }
@@ -161,7 +262,7 @@ export const createSmoothScroll = (): SmoothScroll => {
       }
       // ギャラリーへ入ったなど、走行中にモードが変わったら慣性を捨てる
       if (!inNarrative()) {
-        glide.reset(y);
+        resyncTo(y);
         written = y;
         return;
       }

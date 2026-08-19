@@ -22,7 +22,7 @@ import { QualityController } from './core/quality';
 import { createStarfield } from './render/starfield';
 import { NarrativeScene, ROTATION_PLANES } from './scenes/narrative';
 import { PerspectiveExhibit, type CameraHint } from './scenes/perspectiveExhibit';
-import { CHAPTERS, CHAPTER_DIMS } from './ui/content';
+import { CHAPTERS, CHAPTER_DIMS, CHAPTER_ROLES } from './ui/content';
 import { Overlays, buildNarrativeDOM } from './ui/overlays';
 import { Preloader } from './ui/components/Preloader';
 import { createCursor } from './ui/components/Cursor';
@@ -270,7 +270,7 @@ function bootNarrative(): void {
     から動くので、DOM と WebGL がずれることが構造的に起きない。
     タッチ・スクロールバー・reduced-motion では何もしない(ネイティブのまま)。
   */
-  const smoothScroll = createSmoothScroll();
+  const smoothScroll = createSmoothScroll({ director: scrollDirector, roles: CHAPTER_ROLES });
   // 前段で滑らかになったぶん、dimLevel 側のノッチ隠しは緩める(遅れの二重取りを避ける)
   if (smoothScroll.enabled) scrollDirector.setSmoothRate(SMOOTH_RATE_GLIDING);
 
