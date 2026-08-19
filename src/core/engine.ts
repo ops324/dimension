@@ -1,7 +1,20 @@
 import * as THREE from 'three';
 import { buildPostFX, type PostFX } from '../render/postfx';
 
-export type FrameCallback = (dt: number, t: number) => void;
+/**
+ * 毎フレームの購読者。
+ *
+ * `dt` は `MAX_DELTA` でクランプ済み ── **時間を積分するもの**(位相・残響・
+ * 星の回転)はこちらを使う。タブ復帰の巨大な dt をそのまま積むと、
+ * 見えないあいだに進んだぶんが 1 フレームで飛ぶ(既知の罠 #7)。
+ *
+ * `rawDt` はクランプしていない実経過。**目標へ収束するもの**(スクロールの滑走、
+ * dimLevel の平滑)はこちらを使う ── どちらも任意の dt で厳密な閉じた形なので、
+ * クランプすると「実時間から静かに遅れて、それが累積する」だけになる
+ * (100ms のフレーム落ちで滑走が 50ms 分しか進まない)。巨大な dt に対しては
+ * 素直に「目標へスナップ」となり、それが正しい振る舞いでもある。
+ */
+export type FrameCallback = (dt: number, t: number, rawDt: number) => void;
 export type ResizeCallback = (width: number, height: number, pixelRatio: number) => void;
 /**
  * composer のパスが終わった**後**に走る直描画コールバック。
@@ -290,13 +303,14 @@ export class Engine {
   private readonly tick = (now: number): void => {
     this.rafId = requestAnimationFrame(this.tick);
 
-    const dt = Math.min((now - this.prevTime) / 1000, MAX_DELTA);
+    const rawDt = (now - this.prevTime) / 1000;
+    const dt = Math.min(rawDt, MAX_DELTA);
     this.prevTime = now;
     this.elapsed += dt;
 
     const callbacks = this.frameCallbacks;
     for (let i = 0; i < callbacks.length; i++) {
-      callbacks[i](dt, this.elapsed);
+      callbacks[i](dt, this.elapsed, rawDt);
     }
 
     // GradePass のグレインを流す(reduced-motion では postfx 側が無視する)
