@@ -14,6 +14,8 @@ import { Vector3 } from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 import { Engine } from './core/engine';
+// 型だけ(verbatimModuleSyntax なので完全に消える)。実体は DEV ブロックの動的 import
+import type { ProbeReport, ScrollProbe } from './core/probe';
 import { ScrollDirector, SMOOTH_RATE_GLIDING } from './core/scrollDirector';
 import { createSmoothScroll } from './core/smoothScroll';
 import { Gallery, EXHIBIT_REGISTRY, type ExhibitId } from './core/gallery';
@@ -390,6 +392,20 @@ function bootNarrative(): void {
   // ブラウザペインが非表示のときは rAF が止まりスクリーンショットが白/古いままに
   // なるため、合成フレームを手動で進めて 1 枚だけ描画できるようにしておく。
   if (import.meta.env.DEV) {
+    /*
+      計測プローブ(Phase 34b)。実機のホイール / トラックパッド / 指で
+      10 秒ぶん記録して、フレーム時間・scrollY と dimLevel の折れ・wheel の
+      配送コスト・ジェスチャごとの cancelable / momentum を返す。
+
+      **記録していない間は 1 行も走らない**(sample は先頭で return する)ので、
+      ここに常駐させても通常の DEV 実行には影響しない。実体は動的 import なので
+      本番ビルドには 1 バイトも残らない。
+    */
+    let probe: ScrollProbe | null = null;
+    engine.onFrame(() => {
+      probe?.sample(window.scrollY, scrollDirector.dimLevel);
+    });
+
     let devClock = 0;
     /** 合成フレームを steps 回進めて 1 枚描画する。**いま有効なモードだけ**を進める */
     const renderOnce = (steps = 1): number => {
@@ -454,6 +470,27 @@ function bootNarrative(): void {
       },
       /** 合成フレームを steps 回進めて 1 枚描画する。戻り値は到達した dimLevel */
       renderOnce,
+      /**
+       * 実機のスクロールを seconds 秒ぶん記録して要約を返す(Phase 34b)。
+       * 呼んだら**手でスクロールする** ── 合成イベントでは wheel を奪えないので
+       * (CDP のホイールは常に cancelable = false)、この数だけは実機でしか取れない。
+       *
+       *   await __DIMENSION__.probe.record(10)
+       */
+      probe: {
+        record: async (seconds = 10, raw = false): Promise<ProbeReport> => {
+          const { ScrollProbe } = await import('./core/probe');
+          probe?.dispose();
+          const p = new ScrollProbe();
+          probe = p;
+          try {
+            return await p.record(seconds, { raw });
+          } finally {
+            p.dispose();
+            if (probe === p) probe = null;
+          }
+        },
+      },
       audio: devAudioHooks(wiring),
     };
   }
