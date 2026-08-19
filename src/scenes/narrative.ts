@@ -7,6 +7,7 @@ import { rotateBatch, type PlaneRotation } from '../math/rotation';
 import { projectPerspective } from '../math/projection';
 
 import { LineBatch } from '../render/lineBatch';
+import { installDepthWidth, DEPTH_WIDTH_NOOP, type DepthWidth } from '../render/depthWidth';
 import { PointBatch } from '../render/pointBatch';
 import { PhaseHistory } from '../render/phaseHistory';
 import { CYAN, GOLD, cosinePalette } from '../render/palette';
@@ -24,6 +25,7 @@ import {
   scaffoldAmount,
   scaffoldDensityFade,
   vertigoScale,
+  depthShade,
 } from './narrativeMath';
 
 import type { ScrollDirector } from '../core/scrollDirector';
@@ -484,6 +486,8 @@ export class NarrativeScene implements Exhibit {
   private readonly group = new THREE.Group();
 
   private material!: LineMaterial;
+  /** 深度線幅(Phase 35)。init で組み込むまで、そして注入に失敗したときは恒等 */
+  private depthWidth: DepthWidth = DEPTH_WIDTH_NOOP;
   private lineBatch!: LineBatch;
   private pointBatch!: PointBatch;
 
@@ -694,6 +698,14 @@ export class NarrativeScene implements Exhibit {
     // 切り替えると USE_FOG の定義が変わるためプログラムの再ビルドが要る。
     // LineMaterial の uniforms には UniformsLib.fog が含まれているので安全に効く。
     this.material.fog = true;
+    /*
+      深度線幅(Phase 35)。**残響・軌道環・足場もこのマテリアルを共有している**ので、
+      ここで一度組み込めば図に属する線はすべて同じ規則で振れる。
+      鍵は展示ごとに分ける(既知の罠 #19)── ギャラリーの素の LineMaterial と
+      プログラムを共有してはいけない。
+    */
+    this.depthWidth = installDepthWidth(this.material, 'dimension.narrative.depthWidth');
+
     // resize 時の resolution 更新は engine が一元管理する(既知の罠 #3)
     ctx.engine.registerLineMaterial(this.material);
 
@@ -921,6 +933,12 @@ export class NarrativeScene implements Exhibit {
 
     // 5) 線分への展開と彩色 / 頂点グローの深度キュー
     const depthScale = this.depthScaleFor(dimLevel);
+    /*
+      深度線幅(Phase 35)は**色とまったく同じ量**で振る。ここで配るのが唯一の書き込みで、
+      色の LUT が引くのと同じ depthScale を渡す ── ひとつの深度が二つの方向を指すことが
+      構造的に起きない(depthWidth.ts の設計ノート)。
+    */
+    this.depthWidth.setDepthScale(depthScale);
     this.scatterSegments(depthScale);
     this.shadeVertices(poly.vertexCount, depthScale);
     this.updateGhosts(t, depthScale, ghostAmount);
@@ -1796,7 +1814,7 @@ export class NarrativeScene implements Exhibit {
     for (let i = 0; i < LUT_SIZE; i++) {
       const t01 = i / LUT_MAX;
       cosinePalette(0.15 + 0.7 * t01, color);
-      const shade = 0.55 + 0.35 * t01;
+      const shade = depthShade(t01);
       const o = i * 3;
       lut[o] = color.r * shade;
       lut[o + 1] = color.g * shade;

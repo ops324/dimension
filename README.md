@@ -88,6 +88,7 @@ https://dimension-vert.vercel.app/?gallery=clifford
 - Vite + TypeScript + Three.js(完全静的サイト、外部CDN依存なし)
 - 数学コアは純TypeScript(vitestによる数値検証付き)
 - ファットライン + Unreal Bloom + グレード段(ビネット / フィルムグレイン / 色収差 / ディザ)
+- **線幅は深度の関数**(物語)── 手前 ×1.20 / 奥 ×0.80。幅の深度は色の深度キューと**まったく同じ量**を通るので、見回しても二つの手がかりが離れない
 - 体感を決める式(ゲート・前線・ドリーズームの保存量・昇華)は `src/scenes/narrativeMath.ts` に純関数として切り出し、vitest で縛っている
 - ULTRA品質のエスカレーション起動 + フレーム時間ベースのAUTO降格
 - 音響は WebAudio による完全プロシージャル合成
@@ -101,7 +102,7 @@ https://dimension-vert.vercel.app/?gallery=clifford
 ```bash
 npm install
 npm run dev      # 開発サーバー
-npx vitest run   # 数学コア + 体感を決める純関数のテスト(106件)
+npx vitest run   # 数学コア + 体感を決める純関数のテスト(203件)
 npm run build    # 静的ビルド → dist/
 npm run preview  # 本番ビルドの確認(:4173)
 ```
