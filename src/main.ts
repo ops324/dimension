@@ -354,16 +354,22 @@ function bootNarrative(): void {
 
   // モードで駆動対象を丸ごと切り替える。ギャラリー中は scrollDirector も
   // narrative も overlays も一切走らない(プラン3節)
-  engine.onFrame((dt, t) => {
+  engine.onFrame((dt, t, rawDt) => {
     if (gallery !== null && gallery.isGallery) {
       // 展示はパラメータが主役。重力場は物語だけのものなので、ここで必ず 0 を書く
       starfield.setLens(0, 0, 1);
       gallery.update(dt, t);
       return;
     }
-    // scrollY を書くのは **director が読む前**。同じフレームで文字と図が一致する
-    smoothScroll.update(dt);
-    scrollDirector.update(dt);
+    /*
+      scrollY を書くのは **director が読む前**。同じフレームで文字と図が一致する。
+      この 2 つだけ **クランプしていない rawDt** を受け取る(Phase 34c)──
+      どちらも目標へ収束する閉じた形なので、クランプは「実時間から遅れて、
+      それが累積する」だけの効果しかない。星野と物語シーンは時間を積分するので
+      これまでどおりクランプ済みの dt。
+    */
+    smoothScroll.update(rawDt);
+    scrollDirector.update(rawDt);
     starfield.update(dt);
     narrative.update(dt, t);
     /*
