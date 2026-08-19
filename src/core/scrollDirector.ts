@@ -33,6 +33,13 @@ const SNAP_EPSILON = 1e-4;
 export class ScrollDirector {
   /** 章セクション(index.html の <section class="chapter">) */
   private readonly sections: readonly HTMLElement[];
+  /**
+   * 各章の `.pin`(`position: sticky; height: 100svh`)。
+   * スクラブ区間の長さを決めるのはビューポート高ではなく**この高さ**なので、
+   * 生成時に引いておく(`remeasure()` のたびに querySelector しない)。
+   * 見つからない場合は null で、そのときだけビューポート高へ落とす。
+   */
+  private readonly pins: readonly (HTMLElement | null)[];
   /** 章ごとの目標 dimLevel */
   private readonly dims: Float64Array;
   /**
@@ -80,6 +87,7 @@ export class ScrollDirector {
     }
 
     this.sections = sections;
+    this.pins = sections.map((s) => s.querySelector<HTMLElement>('.pin'));
     this.dims = Float64Array.from(dims);
     this.starts = new Float64Array(sections.length);
     this.lens = new Float64Array(sections.length).fill(1);
@@ -145,8 +153,29 @@ export class ScrollDirector {
     for (let i = 0; i < this.sections.length; i++) {
       const rect = this.sections[i].getBoundingClientRect();
       this.starts[i] = rect.top + scrollY;
-      // ピンが貼り付いている間だけがスクラブ区間。0 除算は max(1,…) で構造的に排除
-      this.lens[i] = Math.max(1, rect.height - vh);
+      /*
+        ピンが貼り付いている間だけがスクラブ区間。その距離は
+        **セクション高 − ピンの高さ**であって、ビューポート高とは関係がない
+        (`position: sticky; top: 0` は、包含ブロックの下端がピンの下端に届いた
+        ところで剥がれる ── どちらの端もビューポートを参照していない)。
+
+        Phase 34f まで、ここは `rect.height − vh` だった。セクション高も
+        `.pin` の高さも **svh**(アドレスバーが出ているときの高さ)で固定なのに、
+        引く側だけが実測の可変高だったので、**モバイルでアドレスバーが引っ込むと
+        localT が丸ごと再スケールし、図が跳んでいた**。しかも remeasure は
+        150ms デバウンス後に走るので、跳ぶのはスクロールしている最中だった。
+
+          svh 745 / lvh 852 の端末、章 220svh の場合
+            旧: 1639 − 852 = 787px   (バー表示時の 894px から −12%)
+            新: 1639 − 745 = 894px   (バーが動いても不変)
+
+        デスクトップでは vh == ピンの高さなので、この 2 式は一致する ──
+        だから PC では一度も現れなかった。
+      */
+      const pin = this.pins[i];
+      const pinHeight = pin !== null ? pin.getBoundingClientRect().height : vh;
+      // 0 除算は max(1,…) で構造的に排除
+      this.lens[i] = Math.max(1, rect.height - pinHeight);
     }
 
     this.scrollMax = Math.max(1, document.documentElement.scrollHeight - vh);
