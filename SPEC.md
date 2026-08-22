@@ -2086,10 +2086,15 @@ URL パラメータ:
 
 | パラメータ | 役割 |
 |---|---|
-| `?gallery=hopf\|clifford\|polytope\|perspective` | **公開仕様**。ギャラリーの指定展示へ直行する共有可能なリンク(§6.1) |
-| `?exhibit=hopf\|clifford\|polytope\|perspective` | **デバッグ用**。物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。シェルを DOM から削除するので**共有には使えない** |
+| `?gallery=polytope\|perspective\|clifford\|hopf` | **公開仕様**。ギャラリーの指定展示へ直行する共有可能なリンク(§6.1)。並びは順路(§2.2) |
+| `?exhibit=polytope\|perspective\|clifford\|hopf` | **デバッグ用**。物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。シェルを DOM から削除するので**共有には使えない** |
 
 両者は決して重ねない。`?exhibit=` が先に判定され、そのとき Router は構築されない。
+
+**取りうる id を手で書き写さない**(Phase 41b)。判定は `core/route.ts` の `isExhibitId` 1 本で、
+`EXHIBIT_REGISTRY` から導出している ── 展示を足しても順路を組み替えても書き換えは要らない。
+Phase 41 で順路を組み替えたとき、`main.ts` に手書きの 4 分岐が 2 つ残って**旧順のまま**になっていた。
+動作は同じでも、読み手には順路がまだ 2 つあるように見える。id を列挙するのはレジストリだけ。
 
 DEVフック `window.__DIMENSION__` はブートパスによって形が異なる:
 

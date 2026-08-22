@@ -50,7 +50,13 @@ interface RouteState {
   readonly y?: number;
 }
 
-function isExhibitId(value: string | null): value is ExhibitId {
+/**
+ * 有効な展示 id か。**この 1 本が「?gallery= / ?exhibit= が取りうる値」の唯一の判定**で、
+ * `EXHIBIT_REGISTRY` から導出している ── 展示を足しても順路を組み替えても、
+ * ここは書き換えなくてよい。手書きの 4 分岐を置くと順路の変更で必ず取り残される
+ * (Phase 41 で main.ts に 2 つ残っていた)。
+ */
+export function isExhibitId(value: string | null): value is ExhibitId {
   return value !== null && EXHIBIT_REGISTRY.some((entry) => entry.id === value);
 }
 
