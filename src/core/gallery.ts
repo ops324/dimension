@@ -39,7 +39,8 @@ import type { Announcer } from '../ui/components/Announcer';
  */
 
 export type GalleryMode = 'narrative' | 'gallery';
-export type ExhibitId = 'hopf' | 'clifford' | 'polytope' | 'perspective';
+/** 展示 id。並びは順路(EXHIBIT_REGISTRY)と同じ ── 値の集合としては順序を持たない */
+export type ExhibitId = 'polytope' | 'perspective' | 'clifford' | 'hopf';
 
 /** 展示レジストリの 1 行。カメラのホーム姿勢と距離制限もここが唯一の情報源 */
 export interface ExhibitEntry {

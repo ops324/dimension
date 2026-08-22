@@ -19,7 +19,7 @@ import type { ProbeReport, ScrollProbe } from './core/probe';
 import { ScrollDirector, SMOOTH_RATE_GLIDING } from './core/scrollDirector';
 import { createSmoothScroll } from './core/smoothScroll';
 import { Gallery, EXHIBIT_REGISTRY, type ExhibitId } from './core/gallery';
-import { Router, parseRoute } from './core/route';
+import { Router, parseRoute, isExhibitId } from './core/route';
 import { QualityController } from './core/quality';
 import { createStarfield } from './render/starfield';
 import { NarrativeScene, ROTATION_PLANES } from './scenes/narrative';
@@ -44,17 +44,14 @@ if (!(canvasEl instanceof HTMLCanvasElement)) {
 const canvas: HTMLCanvasElement = canvasEl;
 
 /**
- * 単独展示のブートパス(開発・回帰検証用)。?exhibit=hopf | clifford | polytope |
- * perspective で物語もギャラリーシェルも迂回し、展示単体 + OrbitControls を起動する。
+ * 単独展示のブートパス(開発・回帰検証用)。?exhibit=<展示 id> で物語もギャラリー
+ * シェルも迂回し、展示単体 + OrbitControls を起動する。取りうる id は
+ * `isExhibitId`(= EXHIBIT_REGISTRY)が決めるので、ここに一覧を書き写さない。
  * 生成そのものは gallery.ts の EXHIBIT_REGISTRY を通すので、展示クラスも
  * カメラのホーム姿勢もギャラリー本線と完全に同一のものが使われる。
  */
 const exhibitParam = new URLSearchParams(window.location.search).get('exhibit');
-const isStandalone =
-  exhibitParam === 'hopf' ||
-  exhibitParam === 'clifford' ||
-  exhibitParam === 'polytope' ||
-  exhibitParam === 'perspective';
+const isStandalone = isExhibitId(exhibitParam);
 
 /**
  * プリローダは **エンジンより先に、同期で** 差し込む。
@@ -104,12 +101,7 @@ const HINT_PAUSE_MS = 6000;
 /** ヒントへの追従速度(expSmooth)。~0.5 秒で寄る */
 const HINT_RATE = 3.2;
 
-if (
-  exhibitParam === 'hopf' ||
-  exhibitParam === 'clifford' ||
-  exhibitParam === 'polytope' ||
-  exhibitParam === 'perspective'
-) {
+if (isExhibitId(exhibitParam)) {
   bootStandaloneExhibit(exhibitParam);
   mountChrome();
 } else {
