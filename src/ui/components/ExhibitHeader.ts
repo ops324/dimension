@@ -51,6 +51,8 @@ export class ExhibitHeader implements Component {
   private readonly taglineEl: HTMLElement;
 
   private readonly running: Animation[] = [];
+  /** 副題だけの差し替え(setTagline)で走る分。入場の振り付けとは別に持つ */
+  private readonly taglineRun: Animation[] = [];
   private enSplit: SplitHandle | null = null;
   private lineSplits: SplitHandle[] = [];
   private current: ExhibitHeaderInfo | null = null;
@@ -112,6 +114,37 @@ export class ExhibitHeader implements Component {
     }
   }
 
+  /**
+   * 副題だけを差し替える(Phase 40)。展示のパラメータが変わるたびに呼ばれる想定で、
+   * **同じ文なら何もしない** ── 変わっていないのに毎回組み直すと、
+   * スライダーを触るあいだ副題が延々と明滅する。
+   *
+   * 触るのは副題の行だけ。英字名の文字送りには手を入れない ── 設定を変えただけで
+   * 見出し全体が語り直されると、切替と区別がつかなくなる。
+   */
+  setTagline(tagline: string): void {
+    const info = this.current;
+    if (info === null || info.tagline === tagline) return;
+    this.current = { ...info, tagline };
+
+    cancelAll(this.taglineRun);
+    // 入場の分割がまだ無い(退出中・破棄後)なら、文字だけ入れて次の apply に任せる
+    const last = this.lineSplits.length - 1;
+    if (last < 0) {
+      this.taglineEl.textContent = tagline;
+      return;
+    }
+
+    this.lineSplits[last].restore();
+    this.taglineEl.textContent = tagline;
+    const [fresh] = splitLinesBatch([this.taglineEl]);
+    this.lineSplits[last] = fresh;
+    pushAll(
+      this.taglineRun,
+      reveal(fresh, { stagger: LINE_STAGGER, duration: LINE_MS, easing: EASE.outExpo }),
+    );
+  }
+
   /** リサイズ時の行の組み直し(表示中の見出しを保ったまま) */
   remeasure(): void {
     const info = this.current;
@@ -134,6 +167,7 @@ export class ExhibitHeader implements Component {
   // --- 内部 ------------------------------------------------------------------
 
   private restore(): void {
+    cancelAll(this.taglineRun);
     this.enSplit?.restore();
     this.enSplit = null;
     for (let i = 0; i < this.lineSplits.length; i++) this.lineSplits[i].restore();

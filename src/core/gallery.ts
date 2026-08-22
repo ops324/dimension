@@ -600,6 +600,18 @@ export class Gallery {
       this.syncSafeArea();
     });
 
+    /*
+      副題は展示のパラメータに追従しうる(Phase 40 の PERSPECTIVE)。
+      **入場のときはここを通らない** ── `applyInfo` が `enter()` の後に走るので、
+      押しても静的な文で上書きされてしまう。入場時は applyInfo が
+      `exhibit.tagline()` を引き、ここで受けるのは表示中の変更だけ。
+    */
+    window.addEventListener('dimension:tagline', (event) => {
+      if (this.mode !== 'gallery') return;
+      const tagline = (event as CustomEvent<string>).detail;
+      if (typeof tagline === 'string') this.header.setTagline(tagline);
+    });
+
     // キャンバスの単タップで没入モードを往復する(ドラッグとは食い合わない)
     this.canvas.addEventListener('pointerdown', this.onCanvasDown);
     this.canvas.addEventListener('pointerup', this.onCanvasUp);
@@ -797,7 +809,11 @@ export class Gallery {
     const total = EXHIBIT_REGISTRY.length;
     const index = EXHIBIT_REGISTRY.findIndex((entry) => entry.id === id) + 1;
 
-    this.header.apply({ index, total, en: info.en, jp: info.jp, tagline: info.tagline });
+    // 副題は展示が設定から作れるならそちらを優先する(Phase 40)。
+    // ここで**引く**のが要 ── applyInfo は enter() の後に走るので、
+    // 展示側からイベントで押しても、この行に上書きされてしまう
+    const tagline = this.exhibits.get(id)?.tagline?.() ?? info.tagline;
+    this.header.apply({ index, total, en: info.en, jp: info.jp, tagline });
     // やさしい層(codex)+ 深い層(explanation)の二層(Phase 15)
     this.drawer.setContent(`${info.jp} / ${info.en}`, info.codex, info.explanation);
     this.hud?.setExhibit(index, total);

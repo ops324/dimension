@@ -25,4 +25,13 @@ export interface Exhibit {
   update(dt: number, t: number): void;
   exit(): void;
   buildPanel(root: HTMLElement): void;
+  /**
+   * 見出しの副題を設定で差し替える展示だけが実装する(Phase 40)。
+   * 実装しなければ `EXHIBIT_INFO.tagline` の固定文がそのまま出る。
+   *
+   * **入場時は gallery がこれを引く**(`applyInfo` は `enter()` の後に走るので、
+   * 展示側からイベントで押しても静的な文に上書きされてしまう)。
+   * 表示中のパラメータ変更は `dimension:tagline` イベントで押す。
+   */
+  tagline?(): string;
 }
