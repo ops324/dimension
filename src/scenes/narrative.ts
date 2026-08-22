@@ -8,6 +8,7 @@ import { projectPerspective } from '../math/projection';
 
 import { LineBatch } from '../render/lineBatch';
 import { installDepthWidth, DEPTH_WIDTH_NOOP, type DepthWidth } from '../render/depthWidth';
+import { coreKFor, glowIntensityFor, glowPxFor, lineGlowQuadWidth } from '../render/lineGlow';
 import { PointBatch } from '../render/pointBatch';
 import { PhaseHistory } from '../render/phaseHistory';
 import { CYAN, GOLD, cosinePalette } from '../render/palette';
@@ -631,6 +632,8 @@ export class NarrativeScene implements Exhibit {
   private lineBrightness = LINE_BASE_BRIGHTNESS;
   /** 縦長ドリー倍率。resize でだけ更新し、カメラリグと線幅の両方がこれを読む */
   private dolly = 1;
+  /** 暈の広がり(px)。次元の関数(lineGlow.ts の glowPxFor) */
+  private glowPx = glowPxFor(0);
   private reduceMotion = false;
   private initialized = false;
 
@@ -694,6 +697,14 @@ export class NarrativeScene implements Exhibit {
       depthWrite: false,
       linewidth: LINE_WIDTH,
     });
+    /*
+      線グロー(Phase 36)は芯を HDR で 1 の上へ飛ばすことで成り立つ。既定の
+      AdditiveBlending は `SRC_ALPHA, ONE` なので寄与が alpha で頭打ちになる ──
+      three が `ONE, ONE` を選ぶのは premultipliedAlpha が立っているときだけ。
+      シェーダーは rgb に乗せ切って alpha=1 を吐くので、three の
+      `<premultiplied_alpha_fragment>` は恒等になる。
+    */
+    this.material.premultipliedAlpha = true;
     // ShaderMaterial の fog 既定は false。**生成時に**立てること ── 実行中に
     // 切り替えると USE_FOG の定義が変わるためプログラムの再ビルドが要る。
     // LineMaterial の uniforms には UniformsLib.fog が含まれているので安全に効く。
@@ -704,7 +715,9 @@ export class NarrativeScene implements Exhibit {
       鍵は展示ごとに分ける(既知の罠 #19)── ギャラリーの素の LineMaterial と
       プログラムを共有してはいけない。
     */
-    this.depthWidth = installDepthWidth(this.material, 'dimension.narrative.depthWidth');
+    this.depthWidth = installDepthWidth(this.material, 'dimension.narrative.depthWidth', {
+      glow: true,
+    });
 
     // resize 時の resolution 更新は engine が一元管理する(既知の罠 #3)
     ctx.engine.registerLineMaterial(this.material);
@@ -939,6 +952,19 @@ export class NarrativeScene implements Exhibit {
       構造的に起きない(depthWidth.ts の設計ノート)。
     */
     this.depthWidth.setDepthScale(depthScale);
+    /*
+      暈の広がりも次元の関数(Phase 36)。**辺の間隔より小さく保つ**のが条件で、
+      6-cube は 192 辺を 4-cube の 32 辺と同じ面積へ詰めるため、次元が上がるほど締める。
+      depthScale と同じくここが唯一の書き込み。
+    */
+    this.glowPx = glowPxFor(dimLevel);
+    this.applyLineWidth();
+    /*
+      芯の鋭さも次元の関数(Phase 36a)。5 次元から先は辺が増えてピークどうしが
+      重なるので芯を鈍らせる。暈が沈まないぶんは強度が自動で戻す ── だから
+      **この 2 つは必ず組で書く**(lineGlow.ts の導出)。
+    */
+    this.depthWidth.setGlow(glowIntensityFor(dimLevel), coreKFor(dimLevel));
     this.scatterSegments(depthScale);
     this.shadeVertices(poly.vertexCount, depthScale);
     this.updateGhosts(t, depthScale, ghostAmount);
@@ -1008,7 +1034,18 @@ export class NarrativeScene implements Exhibit {
    */
   private syncDolly(dolly: number): void {
     this.dolly = dolly;
-    this.material.linewidth = LINE_WIDTH / dolly;
+    this.applyLineWidth();
+  }
+
+  /**
+   * `linewidth` の書き込みはここ 1 箇所。Phase 36 以降、この値の意味は
+   * 「見かけの線幅」ではなく **「暈が入る器の幅」** である(lineGlow.ts)。
+   * 器はドリーでも次元でも動くので、両方の最新値からここで組み立てる。
+   * グローが注入されなかったときだけ、従来どおり見かけの線幅そのものになる。
+   */
+  private applyLineWidth(): void {
+    const base = this.depthWidth.glowInstalled ? lineGlowQuadWidth(this.glowPx) : LINE_WIDTH;
+    this.material.linewidth = base / this.dolly;
   }
 
   /** 辺ごとに subdiv+1 点を 6D のまま線形補間して連続配置する */
