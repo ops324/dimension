@@ -11,6 +11,7 @@ import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
 import { CYAN, cosinePalette } from '../render/palette';
 import { createPanel } from '../ui/panel';
+import { polytopeTagline } from '../ui/content';
 
 import type { EngineCtx, Exhibit } from './exhibit';
 
@@ -298,6 +299,22 @@ export class PolytopeExhibit implements Exhibit {
   }
 
   /**
+   * 見出しの副題。**いま何を見ているか**を、名前と数で名乗る(Phase 41)。
+   * 数はパネルの VERTICES / EDGES と同じ実物の値を渡す ── 二重に数えない。
+   * init() が applyShape() を通るので、gallery が引く時点で polytope は必ずある。
+   */
+  tagline(): string {
+    const poly = this.polytope;
+    const n = poly?.n ?? this.params.n;
+    return polytopeTagline(
+      this.params.family,
+      n,
+      poly?.vertexCount ?? 0,
+      poly?.edgeCount ?? 0,
+    );
+  }
+
+  /**
    * 制御パネル(Phase 7)。族と n はどちらも形状の作り直しを伴うが、
    * バッファは n=10 cube の最悪ケースで確保済みなので再確保は起きない。
    */
@@ -511,6 +528,14 @@ export class PolytopeExhibit implements Exhibit {
     this.buildDepthLut();
 
     this.applyProjection(poly);
+
+    // 見出しの副題を設定に追従させる(Phase 41)。入場時は gallery が tagline() を
+    // **引く**ので、ここで押すのは表示中に族 / N を変えたときのためだけ
+    window.dispatchEvent(
+      new CustomEvent<string>('dimension:tagline', {
+        detail: polytopeTagline(this.params.family, n, poly.vertexCount, poly.edgeCount),
+      }),
+    );
 
     console.info(
       `[polytope] family=${this.params.family} n=${n} verts=${poly.vertexCount} ` +

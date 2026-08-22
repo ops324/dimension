@@ -53,19 +53,45 @@ export interface ExhibitEntry {
 }
 
 /**
- * 展示レジストリ。
+ * 展示レジストリ。**この配列の順序が、そのまま展示の順路**になる ──
+ * タブの並びも、ヘッダと計器の「01 / 04」も、ここ 1 箇所から出る。
  *
- * polytope の出荷時既定は **cube / n=4(テッセラクト)/ 透視** ── Phase 2 の
- * n=10 は性能ストレス用の既定で、作品としての初手ではない(プラン Phase 7 の決定)。
- * n=10 はパネルの N スライダーで即座に到達できる。
+ * 順路は Phase 41 で組み直した(旧: hopf → clifford → polytope → perspective)。
+ * 旧順は「いちばん美しいものを最初に」で並んでいたが、物語の終章は
+ * **「七も、十も、その先も、同じ規則のままそこにある」**と言い終えた直後に
+ * CTA を出す。そこからホップ・ファイブレーションへ落ちるのは、振り出した約束と
+ * 渡すものが違う ── しかも 4 つの中でいちばん難しい対象を初手に置いていた。
+ *
+ *   1. polytope    … 終章の一文の続き。N スライダーは**一軸で読める**唯一の操作子で、
+ *                    「あなたの番」= 主導権の受け渡しがここで目に見える
+ *   2. perspective … N を 10 まで回して「もう見えない」と分かった直後に、
+ *                    **なぜ見えないのか**が来る
+ *   3. clifford    … 4 次元の具体物。平らなまま閉じたトーラス
+ *   4. hopf        … 終曲。クリフォード・トーラスは**ホップ・トーラスの一枚**なので、
+ *                    3 → 4 は「この一枚が、S³ 全体を埋める輪の族だった」という積み上げになる。
+ *                    いちばん強い一枚絵を、報酬として最後に置く
+ *
+ * id は変えていないので `?gallery=hopf` などの既存リンクはそのまま生きる。
+ *
+ * polytope の出荷時既定は **cube / n=7 / 透視**(Phase 41)。物語が到達した最後の
+ * 地点は 6-cube(ヘクセラクト)で、そこから n=4 のテッセラクトへ着地させるのは
+ * **降格**だった ── 6 の次の 7 が、終章が名指しした数であり、可能な最小の一歩。
+ * Phase 2 の n=10 は性能ストレス用の既定で、作品としての初手ではない。
  */
 export const EXHIBIT_REGISTRY: readonly ExhibitEntry[] = [
   {
-    id: 'hopf',
-    home: [3.4, 3.0, 7.6],
+    id: 'polytope',
+    home: [2.7, 1.9, 5.0],
+    minDistance: 2.2,
+    maxDistance: 20,
+    create: () => new PolytopeExhibit({ family: 'cube', n: 7, projection: 'perspective' }),
+  },
+  {
+    id: 'perspective',
+    home: [0, 1.6, 7.2],
     minDistance: 2.5,
-    maxDistance: 40,
-    create: () => new HopfExhibit(),
+    maxDistance: 25,
+    create: () => new PerspectiveExhibit(),
   },
   {
     id: 'clifford',
@@ -75,18 +101,11 @@ export const EXHIBIT_REGISTRY: readonly ExhibitEntry[] = [
     create: () => new CliffordExhibit(),
   },
   {
-    id: 'polytope',
-    home: [2.7, 1.9, 5.0],
-    minDistance: 2.2,
-    maxDistance: 20,
-    create: () => new PolytopeExhibit({ family: 'cube', n: 4, projection: 'perspective' }),
-  },
-  {
-    id: 'perspective',
-    home: [0, 1.6, 7.2],
+    id: 'hopf',
+    home: [3.4, 3.0, 7.6],
     minDistance: 2.5,
-    maxDistance: 25,
-    create: () => new PerspectiveExhibit(),
+    maxDistance: 40,
+    create: () => new HopfExhibit(),
   },
 ];
 
@@ -158,7 +177,12 @@ export class Gallery {
   private perspective: PerspectiveExhibit | null = null;
 
   private mode: GalleryMode = 'narrative';
-  private activeId: ExhibitId = 'hopf';
+  /**
+   * 未指定の入場先(終章の CTA / トップナビ / skip link が通る道)。
+   * **順路の先頭と一致させること** ── ここだけずれると、入場直後に計器が
+   * 「03 / 04」を出す(Phase 41 で hopf から移した)。
+   */
+  private activeId: ExhibitId = 'polytope';
   private active: Exhibit | null = null;
 
   private savedScrollY = 0;
