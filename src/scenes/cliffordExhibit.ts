@@ -7,11 +7,21 @@ import { cosinePalette } from '../render/palette';
 import { createPanel } from '../ui/panel';
 import type { EngineCtx, Exhibit } from './exhibit';
 
+/*
+ * 命名について(Phase 38)。
+ *
+ * 以前は「u 方向の分割数」を `gridU` と呼んでいた。u を分割して得られるのは
+ * **v 円**(u 固定の円)なので、`gridU` が数えているのは v 円の本数である。
+ * この一段のねじれが、パネルのラベルを内部名に合わせた瞬間に
+ * 「u 円の本数」と書かれたスライダーが v 円を増減させる、という形で表に出た。
+ *
+ * → **数えているものを、そのまま名前にする。** `circlesU` は u 円の本数。
+ */
 export interface CliffordParams {
-  /** u 方向の分割数 = v 円(u 固定)の本数 */
-  gridU: number;
-  /** v 方向の分割数 = u 円(v 固定)の本数 */
-  gridV: number;
+  /** u 円(v 固定・座標 0,1 が動く)の本数 */
+  circlesU: number;
+  /** v 円(u 固定・座標 2,3 が動く)の本数 */
+  circlesV: number;
   /** 等傾二重回転(ω2 = ω1)。トーラスは変形せず自身に沿って流れるだけになる */
   isoclinic: boolean;
   /** 平面 (0,1) の角速度 */
@@ -130,8 +140,8 @@ export class CliffordExhibit implements Exhibit {
     this.scene.add(this.group);
 
     this.params = {
-      gridU: params?.gridU ?? 36,
-      gridV: params?.gridV ?? 36,
+      circlesU: params?.circlesU ?? 36,
+      circlesV: params?.circlesV ?? 36,
       // 非等傾が既定: ω1 ≠ ω2 だと 2 族の流れる速さが食い違い、面が自身の
       // 上を滑っていることが色の位相差として見える
       isoclinic: params?.isoclinic ?? false,
@@ -157,7 +167,7 @@ export class CliffordExhibit implements Exhibit {
 
     console.info(
       `[clifford] gpuPath=${this.batch.gpuPath} circles=${this.circleTotal} ` +
-        `(u:${this.params.gridV} + v:${this.params.gridU}) ` +
+        `(u:${this.params.circlesU} + v:${this.params.circlesV}) ` +
         `segments=${this.segmentTotal} (${SEGMENTS}/circle)`,
     );
   }
@@ -184,8 +194,8 @@ export class CliffordExhibit implements Exhibit {
       min: 12,
       max: MAX_GRID,
       step: 4,
-      value: p.gridU,
-      onInput: (v) => this.setGrid(v, p.gridV),
+      value: p.circlesU,
+      onInput: (v) => this.setGrid(v, p.circlesV),
     });
 
     panel.slider({
@@ -193,8 +203,8 @@ export class CliffordExhibit implements Exhibit {
       min: 12,
       max: MAX_GRID,
       step: 4,
-      value: p.gridV,
-      onInput: (v) => this.setGrid(p.gridU, v),
+      value: p.circlesV,
+      onInput: (v) => this.setGrid(p.circlesU, v),
     });
 
     panel.divider();
@@ -253,9 +263,9 @@ export class CliffordExhibit implements Exhibit {
   }
 
   /** 格子密度の変更。ジオメトリを作り直して一括アップロードする */
-  setGrid(gridU: number, gridV?: number): void {
-    this.params.gridU = gridU;
-    this.params.gridV = gridV ?? gridU;
+  setGrid(circlesU: number, circlesV?: number): void {
+    this.params.circlesU = circlesU;
+    this.params.circlesV = circlesV ?? circlesU;
     if (this.initialized) this.rebuild();
   }
 
@@ -288,35 +298,36 @@ export class CliffordExhibit implements Exhibit {
    */
   private rebuild(): void {
     const p = this.params;
-    const gridU = clampGrid(p.gridU);
-    const gridV = clampGrid(p.gridV);
-    p.gridU = gridU;
-    p.gridV = gridV;
+    const circlesU = clampGrid(p.circlesU);
+    const circlesV = clampGrid(p.circlesV);
+    p.circlesU = circlesU;
+    p.circlesV = circlesV;
 
     const color = this.scratchColor;
     // 密度補正は族ごと(片方だけ密にしても輝度バランスが崩れないように)
-    const lumU = BASE_BRIGHTNESS * densityFactor(gridV);
-    const lumV = BASE_BRIGHTNESS * densityFactor(gridU);
+    const lumU = BASE_BRIGHTNESS * densityFactor(circlesU);
+    const lumV = BASE_BRIGHTNESS * densityFactor(circlesV);
 
     let seg = 0;
 
-    // u 円(v = v₀ 固定): (cos u, sin u, cos v₀, sin v₀)/√2 を gridV 本
-    for (let iv = 0; iv < gridV; iv++) {
-      const v0 = (TWO_PI * iv) / gridV;
+    // u 円(v = v₀ 固定): (cos u, sin u, cos v₀, sin v₀)/√2 を circlesU 本。
+    // 走らせるのは**固定する側の v₀** ── u 円を 1 本増やすとは、v をもう 1 つ刻むこと
+    for (let i = 0; i < circlesU; i++) {
+      const v0 = (TWO_PI * i) / circlesU;
       this.fillCircle(v0, false);
-      cosinePalette(PAL_U_START + (PAL_U_END - PAL_U_START) * (iv / gridV), color);
+      cosinePalette(PAL_U_START + (PAL_U_END - PAL_U_START) * (i / circlesU), color);
       seg = this.emitLoop(seg, color, lumU);
     }
 
-    // v 円(u = u₀ 固定): (cos u₀, sin u₀, cos v, sin v)/√2 を gridU 本
-    for (let iu = 0; iu < gridU; iu++) {
-      const u0 = (TWO_PI * iu) / gridU;
+    // v 円(u = u₀ 固定): (cos u₀, sin u₀, cos v, sin v)/√2 を circlesV 本
+    for (let i = 0; i < circlesV; i++) {
+      const u0 = (TWO_PI * i) / circlesV;
       this.fillCircle(u0, true);
-      cosinePalette(PAL_V_START + (PAL_V_END - PAL_V_START) * (iu / gridU), color);
+      cosinePalette(PAL_V_START + (PAL_V_END - PAL_V_START) * (i / circlesV), color);
       seg = this.emitLoop(seg, color, lumV);
     }
 
-    this.circleTotal = gridU + gridV;
+    this.circleTotal = circlesU + circlesV;
     this.segmentTotal = seg;
     this.batch.commitData(seg);
     this.batch.setReveal(this.reveal);
