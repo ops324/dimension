@@ -21,7 +21,7 @@ import { sphereSliceRadius } from '../math/slice';
 import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
 import { CYAN, GOLD, MAGENTA, VIOLET } from '../render/palette';
-import { perspectiveCaption } from '../ui/content';
+import { perspectiveCaption, perspectiveTagline } from '../ui/content';
 import { createPanel } from '../ui/panel';
 import { SHEET_LAYOUT_QUERY } from '../ui/components/component';
 
@@ -637,6 +637,11 @@ export class PerspectiveExhibit implements Exhibit {
     if (this.initialized) this.rebuild();
   }
 
+  /** 見出しの副題。いま誰の目を借りていて、それで足りるのか(Phase 40) */
+  tagline(): string {
+    return perspectiveTagline(this.params.observer, this.params.target);
+  }
+
   setFamily(family: PerspectiveFamily): void {
     this.params.family = family;
     if (this.initialized) this.rebuild();
@@ -786,6 +791,11 @@ export class PerspectiveExhibit implements Exhibit {
 
     this.applyVisibility();
     this.setCaption(perspectiveCaption(this.mode, m, n));
+    // 見出しの副題も設定に追従させる(Phase 40)。入場時は gallery が tagline() を
+    // 引くので、ここで押すのは**表示中に設定を変えたとき**のためだけ
+    window.dispatchEvent(
+      new CustomEvent<string>('dimension:tagline', { detail: perspectiveTagline(m, n) }),
+    );
 
     console.info(
       `[perspective] m=${m} n=${n} family=${p.family} mode=${this.mode} ` +

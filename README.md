@@ -104,7 +104,7 @@ https://dimension-vert.vercel.app/?gallery=clifford
 ```bash
 npm install
 npm run dev      # 開発サーバー
-npx vitest run   # 数学コア + 体感を決める純関数のテスト(257件)
+npx vitest run   # 数学コア + 体感を決める純関数のテスト(263件)
 npm run build    # 静的ビルド → dist/
 npm run preview  # 本番ビルドの確認(:4173)
 ```
