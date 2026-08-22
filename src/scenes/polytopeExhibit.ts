@@ -5,6 +5,7 @@ import { clamp, expSmooth } from '../math/ease';
 import { makePolytope, type Polytope, type PolytopeFamily } from '../math/polytopes';
 import { rotateBatch, type PlaneRotation } from '../math/rotation';
 import { projectOrtho, projectPerspective } from '../math/projection';
+import { MAX_TUMBLE_PLANES, planTumble } from '../math/tumble';
 
 import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
@@ -103,14 +104,6 @@ const FIT_SPAN = 53.7;
 /** reveal(draw-on)の収束速度。expSmooth で ~350ms */
 const REVEAL_RATE = 9;
 
-/**
- * 自動タンブルの角速度。比を無理数にして周期が一致しないようにする
- * (合成回転が決して同じ姿勢へ戻らない = 常に新しい断面が見える)。
- */
-const OMEGA_0 = 0.31;
-const OMEGA_1 = 0.23 * Math.SQRT2;
-const OMEGA_2 = 0.17 * Math.sqrt(5);
-
 /** 深度 → 色のルックアップ表の解像度 */
 const LUT_SIZE = 256;
 const LUT_MAX = LUT_SIZE - 1;
@@ -169,11 +162,6 @@ const CAPACITY = (() => {
   return { vertices, segments, subPoints };
 })();
 
-function setPlane(rot: PlaneRotation, i: number, j: number): void {
-  rot.i = i;
-  rot.j = j;
-}
-
 /** 深度(正規化済み ∈[-1,1])→ LUT の行インデックス */
 function lutIndexOf(depth: number, scale: number): number {
   const t = (depth * scale + 1) * 0.5 * LUT_MAX;
@@ -212,12 +200,18 @@ export class PolytopeExhibit implements Exhibit {
   /** 深度 → RGB の事前計算表(毎フレーム 25,600 回 cos を呼ばないため) */
   private depthLut!: Float32Array;
 
-  /** 自動タンブルの 3 平面。オブジェクトは使い回して angle/i/j だけ書き換える */
-  private readonly rots: PlaneRotation[] = [
-    { i: 0, j: 1, angle: 0 },
-    { i: 0, j: 2, angle: 0 },
-    { i: 1, j: 2, angle: 0 },
-  ];
+  /**
+   * 自動タンブルの回転平面。**枚数は投影モードと n で変わる**(tumble.ts)ので
+   * 長さは可変で、実体は pool から使い回す ── 毎フレーム書き換えるのは angle だけ。
+   */
+  private readonly rotPool: readonly PlaneRotation[] = Array.from(
+    { length: MAX_TUMBLE_PLANES },
+    () => ({ i: 0, j: 1, angle: 0 }),
+  );
+  private readonly rots: PlaneRotation[] = [];
+  /** rots[r] の角速度(rad/s)と初期位相(rad) */
+  private readonly omegas = new Float64Array(MAX_TUMBLE_PLANES);
+  private readonly phases = new Float64Array(MAX_TUMBLE_PLANES);
   /** computeDepthScale の作業用ビット列 */
   private readonly axisFlags = new Uint8Array(N_MAX);
   private readonly scratchColor = new THREE.Color();
@@ -383,12 +377,10 @@ export class PolytopeExhibit implements Exhibit {
     }
 
     const n = poly.n;
-    const rots = this.rots;
     // 角度は毎フレーム絶対時刻から再計算する(増分積算しないので誤差が溜まらない)
-    rots[0].angle = OMEGA_0 * t;
-    rots[1].angle = OMEGA_1 * t;
-    rots[2].angle = OMEGA_2 * t;
+    this.setAngles(t);
 
+    const rots = this.rots;
     const perspective = this.params.projection === 'perspective';
     const dist = this.dist;
 
@@ -509,10 +501,8 @@ export class PolytopeExhibit implements Exhibit {
     this.polytope = poly;
     this.subdivisions = subdivisionsFor(n);
 
-    this.pickPlanes(n);
     this.buildSubdivided(poly);
     this.vertBase.set(poly.vertices);
-    this.depthScale = this.computeDepthScale(poly);
 
     this.lineBrightness =
       LINE_BASE_BRIGHTNESS * Math.min(1, DENSITY_REFERENCE_EDGES / poly.edgeCount);
@@ -524,17 +514,25 @@ export class PolytopeExhibit implements Exhibit {
 
     console.info(
       `[polytope] family=${this.params.family} n=${n} verts=${poly.vertexCount} ` +
-        `edges=${poly.edgeCount} subSegs=${this.segCount} ` +
-        `dist=${this.dist.toFixed(2)} fit=${this.group.scale.x.toFixed(3)}`,
+        `edges=${poly.edgeCount} subSegs=${this.segCount} proj=${this.params.projection} ` +
+        `planes=${this.rots.length} dist=${this.dist.toFixed(2)} ` +
+        `fit=${this.group.scale.x.toFixed(3)}`,
     );
   }
 
   /**
-   * 実効視点距離とワールドスケールを決める。形状変更と投影モード変更でのみ実行。
+   * 回転平面・深度スケール・実効視点距離・ワールドスケールを決める。
+   * 形状変更と投影モード変更でのみ実行。
    * 測定には毎フレームと同じ回転・投影経路を使う(数式を二重実装しない)。
    */
   private applyProjection(poly: Polytope): void {
     const perspective = this.params.projection === 'perspective';
+
+    // 平面は投影モードに従属し、深度スケールは平面に従属する。だから
+    // **投影を切り替えたときも**この順で張り直す必要がある(形状変更だけではない)。
+    this.pickPlanes(poly.n, perspective);
+    this.depthScale = this.computeDepthScale(poly);
+
     let dist = this.params.dist;
     let radius = this.measureRadius(poly, dist, perspective);
 
@@ -558,10 +556,7 @@ export class PolytopeExhibit implements Exhibit {
 
     let maxSq = 0;
     for (let s = 0; s < FIT_SAMPLES; s++) {
-      const t = (s / FIT_SAMPLES) * FIT_SPAN;
-      rots[0].angle = OMEGA_0 * t;
-      rots[1].angle = OMEGA_1 * t;
-      rots[2].angle = OMEGA_2 * t;
+      this.setAngles((s / FIT_SAMPLES) * FIT_SPAN);
       rotateBatch(this.vertBase, this.vertRot, n, count, rots);
       if (perspective) {
         projectPerspective(this.vertRot, n, count, dist, out);
@@ -608,35 +603,31 @@ export class PolytopeExhibit implements Exhibit {
   }
 
   /**
-   * 回転平面の選択。3 枚で次の 3 条件を同時に満たす必要がある:
+   * 回転平面を張り直す(tumble.ts が条件を持っている)。
    *
-   * 1. 少なくとも 1 平面が軸 3 以上を含む ─ さもないと「ただの 3D の回転」に
-   *    なり高次元性が見えない。
-   * 2. **最終軸(深度軸)n−1 が必ず回る** ─ 回らないと深度が定数になり、
-   *    配色の深度キューが凍りつく。
-   * 3. **可視 3 軸だけで閉じた平面を 1 枚含む** ─ 高次元平面だけで組むと
-   *    3D 空間内での姿勢が変わらず、形状が正面固定のまま脈動するだけに見える
-   *    (実測: (0,3)/(1,n−1)/(2,n−2) の組では 10-cube が常に正面向きの
-   *    「トンネル」に見えてしまった)。
-   *
-   * → (0,2) で 3D の傾き、(1,n−1) で深度軸、(2,n−2) で中位軸を混ぜる。
+   * **投影モードが変わったら必ず呼ぶこと。** 直交は「すべての軸が可視 3 軸へ
+   * 到達する」ことを要求し、透視は要求しない ── 条件が違うので平面の組も違う。
    */
-  private pickPlanes(n: number): void {
-    const r = this.rots;
-    if (n <= 3) {
-      setPlane(r[0], 0, 1);
-      setPlane(r[1], 0, 2);
-      setPlane(r[2], 1, 2);
-      return;
+  private pickPlanes(n: number, perspective: boolean): void {
+    const plan = planTumble(n, perspective);
+    const rots = this.rots;
+    rots.length = 0;
+    for (let k = 0; k < plan.planes.length; k++) {
+      const rot = this.rotPool[k];
+      rot.i = plan.planes[k][0];
+      rot.j = plan.planes[k][1];
+      this.omegas[k] = plan.omegas[k];
+      this.phases[k] = plan.phases[k];
+      rots.push(rot);
     }
-    setPlane(r[0], 0, 2);
-    setPlane(r[1], 1, n - 1);
-    if (n - 2 > 2) {
-      setPlane(r[2], 2, n - 2);
-    } else {
-      // n=4 は (2,2) が退化する。(0,3) にすると 4 軸すべてが回る
-      setPlane(r[2], 0, 3);
-    }
+  }
+
+  /** 全平面の角度を絶対時刻から張り直す(update と measureRadius で共有) */
+  private setAngles(t: number): void {
+    const rots = this.rots;
+    const omegas = this.omegas;
+    const phases = this.phases;
+    for (let r = 0; r < rots.length; r++) rots[r].angle = omegas[r] * t + phases[r];
   }
 
   /**
