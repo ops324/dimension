@@ -169,6 +169,11 @@ export function makePolytope(family: PolytopeFamily, n: number): Polytope {
  * 2-面の列挙(超平面スライス用 — slice.ts が辺∩超平面ではなく
  * 2-面∩超平面の線分を集めるために使う)。
  *
+ * 展示の断面は Phase 39 で `flatSlice.ts`(余次元 k 版)へ移ったので、
+ * これを呼ぶのは `slice.ts` とテストだけになった。基準実装として残している
+ * ── 理由は slice.ts の冒頭を参照。一般の j-面は `faceCountOfDim` /
+ * `makeFlatSliceGeometry` が数え上げる。
+ *
  * - cube:      軸対 (i<j) × 残り n−2 軸の符号 2^(n−2) 通り → 四角形
  * - simplex:   頂点の 3 部分集合すべて → C(n+1,3) 三角形
  * - orthoplex: 軸 3 つ組 (i<j<k) × 各符号 2³ → C(n,3)·8 三角形

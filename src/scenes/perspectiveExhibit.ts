@@ -3,16 +3,20 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 
 import { clamp, clamp01, expSmooth } from '../math/ease';
 import {
-  makeFaces2,
   makeNOrthoplex,
   makePolytope,
-  type Faces2,
   type Polytope,
   type PolytopeFamily,
 } from '../math/polytopes';
 import { rotateBatch, type PlaneRotation } from '../math/rotation';
 import { projectPerspective } from '../math/projection';
-import { sliceFaces, sphereSliceRadius } from '../math/slice';
+import {
+  faceCountOfDim,
+  makeFlatSliceGeometry,
+  sliceFlat,
+  type FlatSliceGeometry,
+} from '../math/flatSlice';
+import { sphereSliceRadius } from '../math/slice';
 
 import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
@@ -108,6 +112,16 @@ const SWEEP_OMEGA = 0.25;
 /** 頂点との厳密一致による交差判定の不安定さを避ける(既知の罠 #9) */
 const SWEEP_EPS = 1e-9;
 
+/**
+ * 掃引しない中間軸(m..n−2)を固定する位置。m < n−1 のときだけ使う。
+ *
+ * **0 ちょうどに置いてはいけない。** 正軸体の頂点 ±e_i はほとんどの座標が 0 で、
+ * 平坦面がそれをまとめて通ると交点が重複して断面が壊れる(既知の罠 #9 の、
+ * 余次元が 2 以上になったときの姿)。中心の近くで、互いに異なる半端な値にする ──
+ * 中心付近を通すのは、断面が最も大きく育つ場所を見せるため。
+ */
+const FIXED_AXIS_OFFSETS: readonly number[] = [0.031, -0.047, 0.023, -0.017];
+
 /** 透視カスケードの視点距離(プラン既定)。形状は外接半径 1 なので分母は安全 */
 const PROJECT_DIST = 2.4;
 
@@ -191,17 +205,18 @@ function edgeCountOf(family: PolytopeFamily, n: number): number {
   }
 }
 
-/** 2-面の数 = 断面線分数の上限(1 面につき高々 1 線分) */
+/**
+ * 断面線分数の上限。
+ *
+ * 断面の辺を生むのは **(k+1)-面**(k = n − m)で、1 面につき高々 1 線分。
+ * m は 2..n−1 を動くので k+1 は 2..n−1 を動く ── どの次元の面が最大に
+ * なるかは族と n で変わるので、全次元の最大を取る(Phase 39)。
+ */
 function faceCountOf(family: PolytopeFamily, n: number): number {
   if (n < 2) return 0;
-  switch (family) {
-    case 'cube':
-      return ((n * (n - 1)) / 2) * (1 << (n - 2));
-    case 'simplex':
-      return ((n + 1) * n * (n - 1)) / 6;
-    case 'orthoplex':
-      return n < 3 ? 0 : ((n * (n - 1) * (n - 2)) / 6) * 8;
-  }
+  let max = 0;
+  for (let j = 0; j <= n; j++) max = Math.max(max, faceCountOfDim(family, n, j));
+  return max;
 }
 
 /**
@@ -314,7 +329,7 @@ export class PerspectiveExhibit implements Exhibit {
   private vertBase!: Float64Array;
   /** 回転後の頂点 */
   private vertRot!: Float64Array;
-  /** sliceFaces の出力。線分ごとに端点 2 × (n−1) 座標 */
+  /** sliceFlat の出力。線分ごとに端点 2 × **m 座標**(m ≤ n−1 なので確保量は据え置き) */
   private sliceOut!: Float64Array;
   /** 断面端点 / 影の頂点を 3D へ落とした結果 */
   private packed3!: Float32Array;
@@ -335,7 +350,10 @@ export class PerspectiveExhibit implements Exhibit {
   private readonly scratchColorB = new THREE.Color();
 
   private polytope: Polytope | null = null;
-  private faces: Faces2 | null = null;
+  /** 断面の組合せ構造。**観測者 m を変えたら組み直す**(余次元が変わるため) */
+  private sliceGeom: FlatSliceGeometry | null = null;
+  /** 平坦面の固定位置。offsets[j] が軸 m+j に対応する */
+  private readonly sliceOffsets = new Float64Array(TARGET_MAX);
   /** 解決済みモード(params.mode と同期する)と、ユーザーが最後に選んだ希望モード */
   private mode: PerspectiveMode = 'slice';
   private requestedMode: PerspectiveMode = 'slice';
@@ -729,7 +747,7 @@ export class PerspectiveExhibit implements Exhibit {
 
     this.pickPlanes(n);
     this.polytope = null;
-    this.faces = null;
+    this.sliceGeom = null;
     this.pointCount = 0;
     this.xrayPulseCount = 0;
     this.xrayGlowCount = 0;
@@ -742,7 +760,9 @@ export class PerspectiveExhibit implements Exhibit {
       if (p.family !== 'sphere') {
         const poly = makePolytope(p.family, n);
         this.polytope = poly;
-        this.faces = makeFaces2(p.family, n);
+        // 断面は観測者の m 次元平坦面で切る = 余次元 k は m にも従属する。
+        // だから **m を変えたときも**ここを通す必要がある(rebuild が唯一の入口)
+        if (this.mode === 'slice') this.sliceGeom = makeFlatSliceGeometry(p.family, n, n - m);
         this.vertBase.set(poly.vertices);
         this.lineBrightness =
           this.mode === 'shadow'
@@ -755,13 +775,9 @@ export class PerspectiveExhibit implements Exhibit {
       this.rebuildInsetEdges();
     }
 
-    // 断面/影が z=0 平面に収まる構図か(= 2 次元世界ビュー)
-    this.hintFlat =
-      this.mode === 'slice'
-        ? p.family === 'sphere'
-          ? m === 2
-          : n - 1 === 2
-        : this.mode === 'shadow' && m === 2;
+    // 断面/影が z=0 平面に収まる構図か(= 2 次元世界ビュー)。
+    // 断面はいま **m 次元**で出るので、族によらず m===2 が平面ビュー(Phase 39)
+    this.hintFlat = this.mode === 'slice' ? m === 2 : this.mode === 'shadow' && m === 2;
     this.hintPlan = this.mode === 'xray' && n === 2;
     this.hintTimer = HINT_DURATION;
 
@@ -773,7 +789,8 @@ export class PerspectiveExhibit implements Exhibit {
 
     console.info(
       `[perspective] m=${m} n=${n} family=${p.family} mode=${this.mode} ` +
-        `verts=${this.polytope?.vertexCount ?? 0} faces=${this.faces?.count ?? 0} ` +
+        `verts=${this.polytope?.vertexCount ?? 0} ` +
+        `slice=${this.sliceGeom === null ? '-' : `${this.sliceGeom.codim}co/${this.sliceGeom.nodeCount}v/${this.sliceGeom.linkCount}e`} ` +
         `fit=${this.group.scale.x.toFixed(3)}`,
     );
   }
@@ -881,16 +898,25 @@ export class PerspectiveExhibit implements Exhibit {
   }
 
   /**
-   * 断面モード: 各 2-面と超平面 {x[n−1] = s} の交差線分を集める。
-   * 断面は (n−1) 次元 ── そのまま描けるのは 2D/3D までで、それ以上は
-   * 透視カスケードで 3D へ落とす。
+   * 断面モード: 観測者の **m 次元平坦面** A = { x_m = …, x_{n−1} = s } で切る。
+   *
+   * 断面は m 次元 ── つまり画面に出るのは「その次元の住人が本当に見ている
+   * 切り口」である(Phase 39 でここを直した。それまでは常に n−1 次元を出して
+   * いたので、m < n−1 では OBSERVER を動かしても絵が変わらなかった)。
+   * m が 4 以上のときだけ、透視カスケードで 3D へ落とす。
    */
   private buildSlice(n: number, s: number): number {
-    const faces = this.faces;
-    if (faces === null) return 0;
+    const geom = this.sliceGeom;
+    if (geom === null) return 0;
 
-    const dim = n - 1;
-    const segments = sliceFaces(this.vertRot, n, faces, n - 1, s + SWEEP_EPS, this.sliceOut);
+    const dim = this.params.observer;
+    const k = n - dim;
+    const offsets = this.sliceOffsets;
+    // 掃引するのは最終軸(= 神視点インセットの高さ s)。中間軸は中心近くに固定する
+    for (let j = 0; j < k - 1; j++) offsets[j] = FIXED_AXIS_OFFSETS[j % FIXED_AXIS_OFFSETS.length];
+    offsets[k - 1] = s + SWEEP_EPS;
+
+    const segments = sliceFlat(this.vertRot, n, dim, offsets, geom, this.sliceOut);
     const pos = this.lineBatch.positions;
     const pts = this.pointBatch.positions;
     const sizes = this.pointBatch.sizes;
@@ -1331,7 +1357,7 @@ export class PerspectiveExhibit implements Exhibit {
     let traceSegments = 0;
     const dst = this.insetTracePos;
     if (this.mode === 'slice' && poly !== null) {
-      const dim = poly.n - 1;
+      const dim = this.params.observer; // 断面は m 次元(Phase 39)
       const src = this.sliceOut;
       traceSegments = this.segCount;
       for (let i = 0; i < traceSegments; i++) {
