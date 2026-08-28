@@ -15,6 +15,8 @@ export type {
   ButtonSpec,
   ReadoutSpec,
   ReadoutUpdate,
+  PlaneGridCell,
+  PlaneGridSpec,
   PanelBuilder,
 } from './components/controls/Panel';
 

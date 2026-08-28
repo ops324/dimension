@@ -5,12 +5,19 @@ import { clamp, expSmooth } from '../math/ease';
 import { makePolytope, type Polytope, type PolytopeFamily } from '../math/polytopes';
 import { rotateBatch, type PlaneRotation } from '../math/rotation';
 import { projectOrtho, projectPerspective } from '../math/projection';
-import { MAX_TUMBLE_PLANES, planTumble } from '../math/tumble';
+import {
+  MAX_PLANE_ROTATIONS,
+  allPlaneKeys,
+  defaultSpin,
+  planRotations,
+  planeFromKey,
+  planeKey,
+} from '../math/tumble';
 
 import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
 import { CYAN, cosinePalette } from '../render/palette';
-import { createPanel } from '../ui/panel';
+import { createPanel, type PlaneGridCell } from '../ui/panel';
 import { polytopeTagline } from '../ui/content';
 
 import type { EngineCtx, Exhibit } from './exhibit';
@@ -27,6 +34,14 @@ export interface PolytopeParams {
    * 形状ごとに自動的に伸びる ─ MAX_PROJECTED_RADIUS のコメント参照。
    */
   dist: number;
+  /**
+   * 回す平面のキー集合(`planeKey`)。**null は「この形状の既定に従う」**(Phase 43)。
+   *
+   * null を別の値として持つのは、既定が n と投影モードで変わるからだ ──
+   * 既定を配列に展開して持つと、N を動かした瞬間に「前の形状の既定」が
+   * ユーザーの選択として居座る。null なら追従し、触れた瞬間に自分の意思になる。
+   */
+  spin: number[] | null;
 }
 
 const N_MIN = 3;
@@ -163,6 +178,27 @@ const CAPACITY = (() => {
   return { vertices, segments, subPoints };
 })();
 
+/**
+ * 回転平面のプリセット(Phase 43)。**表として持つ**のは PERSPECTIVE と同じ理由で、
+ * 「いまの状態がどれと一致するか」を後から問い合わせられるようにするため ──
+ * 表にすると、プリセットが状態の**表示**でもある。
+ *
+ * ボトムシート版レイアウトとタッチ環境では升目が隠れるので、
+ * **この 4 つがそこでの唯一の操作子**になる。だから「既定へ戻す」を先頭に置く。
+ */
+interface SpinPreset {
+  readonly key: string;
+  readonly label: string;
+  readonly kind: 'default' | 'depth' | 'pose' | 'all';
+}
+
+const SPIN_PRESETS: readonly SpinPreset[] = [
+  { key: 'spin-default', label: '既定に戻す', kind: 'default' },
+  { key: 'spin-depth', label: '深度を重く', kind: 'depth' },
+  { key: 'spin-pose', label: '3D の姿勢を重く', kind: 'pose' },
+  { key: 'spin-all', label: '全部まわす', kind: 'all' },
+];
+
 /** 深度(正規化済み ∈[-1,1])→ LUT の行インデックス */
 function lutIndexOf(depth: number, scale: number): number {
   const t = (depth * scale + 1) * 0.5 * LUT_MAX;
@@ -206,13 +242,20 @@ export class PolytopeExhibit implements Exhibit {
    * 長さは可変で、実体は pool から使い回す ── 毎フレーム書き換えるのは angle だけ。
    */
   private readonly rotPool: readonly PlaneRotation[] = Array.from(
-    { length: MAX_TUMBLE_PLANES },
+    { length: MAX_PLANE_ROTATIONS },
     () => ({ i: 0, j: 1, angle: 0 }),
   );
   private readonly rots: PlaneRotation[] = [];
-  /** rots[r] の角速度(rad/s)と初期位相(rad) */
-  private readonly omegas = new Float64Array(MAX_TUMBLE_PLANES);
-  private readonly phases = new Float64Array(MAX_TUMBLE_PLANES);
+  /**
+   * rots[r] の角速度(rad/s)と初期位相(rad)。
+   *
+   * **プールと同じ長さであること。** 短いと `rotPool[k]` が undefined で
+   * TypeError、`omegas[k]` は Float64Array なので範囲外書き込みが**黙って捨てられ**、
+   * `setAngles` が undefined を読んで angle = NaN → Math.cos(NaN) が全座標へ
+   * NaN を配り、図が静かに消える(罠 #25)。
+   */
+  private readonly omegas = new Float64Array(MAX_PLANE_ROTATIONS);
+  private readonly phases = new Float64Array(MAX_PLANE_ROTATIONS);
   /** computeDepthScale の作業用ビット列 */
   private readonly axisFlags = new Uint8Array(N_MAX);
   private readonly scratchColor = new THREE.Color();
@@ -245,6 +288,7 @@ export class PolytopeExhibit implements Exhibit {
       n: params?.n ?? 10,
       projection: params?.projection ?? 'perspective',
       dist: params?.dist ?? 2.4,
+      spin: params?.spin ?? null,
     };
 
     this.group.name = 'polytope';
@@ -323,13 +367,31 @@ export class PolytopeExhibit implements Exhibit {
     const panel = createPanel(root, 'POLYTOPE EXPLORER');
 
     const counts = panel.readout({ label: 'VERTICES / EDGES' });
+    const planes = panel.readout({ label: 'SPINNING / PLANES' });
+    /**
+     * 「適用後の params を読み直して自分を合わせる」唯一の場所(PERSPECTIVE の
+     * sync と同じ設計)。升目・計器・プリセットの現在地は、どの経路で状態が
+     * 変わってもここを通る ── UI 側に規則を二重実装しない。
+     */
     const refresh = (): void => {
       const poly = this.polytope;
       if (poly !== null) counts(`${poly.vertexCount} / ${poly.edgeCount}`);
+      const summary = this.spinSummary();
+      // 上限で載らなかった枚数は黙らない。静かな切り捨ては「全部やった」に見える
+      planes(
+        summary.dropped > 0
+          ? `${summary.spinning} / ${summary.total}(上限で ${summary.dropped} 枚 保留)`
+          : `${summary.spinning} / ${summary.total}`,
+      );
+      panel.setValue('n', this.params.n);
+      panel.paintPlaneGrid('planes', this.params.n, this.planeCells());
+      for (const item of SPIN_PRESETS) {
+        panel.setActive(item.key, this.matchesPreset(item.kind));
+      }
     };
-    refresh();
 
     panel.segmented({
+      key: 'family',
       label: 'FAMILY / 族',
       options: [
         ['cube', '超立方体'],
@@ -344,6 +406,7 @@ export class PolytopeExhibit implements Exhibit {
     });
 
     panel.slider({
+      key: 'n',
       label: 'N / 次元',
       min: N_MIN,
       max: N_MAX,
@@ -356,19 +419,67 @@ export class PolytopeExhibit implements Exhibit {
     });
 
     panel.segmented({
+      key: 'projection',
       label: 'PROJECTION / 投影',
       options: [
         ['perspective', '透視'],
         ['ortho', '直交'],
       ],
       value: p.projection,
-      onSelect: (v) => this.setProjection(v as ProjectionMode),
+      onSelect: (v) => {
+        this.setProjection(v as ProjectionMode);
+        refresh();
+      },
     });
 
     panel.note(
       '辺が曲がって見えるのは誤差ではない ── 高次元のまっすぐな辺は、' +
         '影になるとき本当に曲がる。色は、見えなくなった軸の深さ。',
     );
+
+    panel.divider();
+
+    /*
+      回転平面(Phase 43)。
+
+      プリセットを**先に**置くのは PERSPECTIVE と同じ理由 ── 表として持てば
+      「いまの状態がどれと一致するか」を後から問い合わせられ、升目を直接
+      押したときにも現在地が点く。そしてボトムシート版レイアウトでは
+      升目が CSS で隠れるので、**この 4 つが唯一の操作子**になる。
+    */
+    panel.note('ROTATION PLANES / 回転平面');
+    for (const item of SPIN_PRESETS) {
+      panel.button({
+        key: item.key,
+        label: item.label,
+        onClick: () => {
+          this.setSpin(this.spinPreset(item.kind));
+          refresh();
+        },
+      });
+    }
+
+    panel.planeGrid({
+      key: 'planes',
+      label: 'PLANES / 平面 (i, j)',
+      maxAxes: N_MAX,
+      axes: p.n,
+      cells: this.planeCells(),
+      onToggle: (i, j) => {
+        this.togglePlane(i, j);
+        refresh();
+      },
+    });
+
+    // note は textContent なので、強調の記号を書くとそのまま画面に出る
+    panel.note(
+      '塗られた升は回っている平面、点だけの升は止めた平面 ── 回転は止まるが、' +
+        '軸の混ざりは残る。そうしないと投影が捨てる軸へ回転が一度も触れなくなり、' +
+        'その次元は像から丸ごと消える(n を上げても絵が変わらなくなる)。' +
+        '破線の升は選ばれてはいるが、枚数の上限で順番待ちしている平面。',
+    );
+
+    refresh();
   }
 
   /** 形状の切り替え。事前確保済みバッファを再利用し、前計算だけをやり直す */
@@ -381,6 +492,159 @@ export class PolytopeExhibit implements Exhibit {
   setProjection(mode: ProjectionMode): void {
     this.params.projection = mode;
     if (this.polytope !== null) this.applyProjection(this.polytope);
+  }
+
+  /**
+   * 回す平面の集合を差し替える(Phase 43)。`null` で形状ごとの既定へ戻す。
+   *
+   * **`applyProjection` は通さない。** あれは実効視点距離 `dist` を最大 9 回の
+   * `measureRadius` で伸ばすので、透視の 10-cube では実測 63ms(4 フレーム)止まり、
+   * しかも `dist` が作り直されて**升目を押すたびに透視の効き方が跳ねる**。
+   * 平面を変えて動くのは「回転が掃く範囲」だけなので、深度スケールと
+   * ワールド倍率だけを測り直す ── `dist` は形状と投影が決めた値のまま保つ。
+   */
+  setSpin(spin: number[] | null): void {
+    this.params.spin = spin === null ? null : this.normalizeSpin(spin);
+    const poly = this.polytope;
+    if (poly === null) return;
+    this.pickPlanes();
+    this.depthScale = this.computeDepthScale(poly);
+    const perspective = this.params.projection === 'perspective';
+    const radius = this.measureRadius(poly, this.dist, perspective);
+    this.group.scale.setScalar(radius > 1e-6 ? TARGET_RADIUS / radius : TARGET_RADIUS);
+  }
+
+  /**
+   * 選択を正規化する。**既定とちょうど同じなら null へ畳む。**
+   *
+   * 畳まないと、升目を切って戻したユーザーは「既定と同じ集合だが null ではない」
+   * 状態に落ちる ── プリセットの現在地がどこにも点かず、N を動かしても
+   * 新しい形状の既定へ追従しなくなる。
+   */
+  private normalizeSpin(spin: number[]): number[] | null {
+    const sorted = [...new Set(spin)].sort((a, b) => a - b);
+    const base = [...this.baseKeys()].sort((a, b) => a - b);
+    if (sorted.length === base.length && sorted.every((key, k) => key === base[k])) return null;
+    return sorted;
+  }
+
+  /** 平面 (i, j) の回転を入り切りする。基底の平面を切ると**凍結**になる */
+  togglePlane(i: number, j: number): void {
+    const key = planeKey(i, j);
+    const spin = this.effectiveSpin();
+    if (spin.has(key)) spin.delete(key);
+    else if (this.canAdd(key)) spin.add(key);
+    else return;
+    this.setSpin([...spin]);
+  }
+
+  /**
+   * その平面をこれ以上足せるか。**基底の平面はいつでも足せる**(既に列に居て
+   * 凍結しているだけなので、ON にしても列は伸びない)。伸びるのは追加平面だけ。
+   */
+  private canAdd(key: number): boolean {
+    if (this.baseKeys().has(key)) return true;
+    return this.rots.length < MAX_PLANE_ROTATIONS;
+  }
+
+  private baseKeys(): Set<number> {
+    return defaultSpin(this.params.n, this.params.projection === 'perspective');
+  }
+
+  /**
+   * 升目の現在状態(パネルが塗るためのビュー)。
+   * 状態の判定はここ 1 箇所 ── UI 側に規則を二重実装しない。
+   */
+  planeCells(): PlaneGridCell[] {
+    const n = this.params.n;
+    const spin = this.effectiveSpin();
+    const base = this.baseKeys();
+    const full = this.rots.length >= MAX_PLANE_ROTATIONS;
+    // **実際に回っている平面**は選択ではなく回転列から読む。上限で列へ載れなかった
+    // ものを点灯させると、升目だけが「全部まわっている」と言うことになる
+    const live = new Set<number>();
+    for (let k = 0; k < this.rots.length; k++) {
+      if (this.omegas[k] > 0) live.add(planeKey(this.rots[k].i, this.rots[k].j));
+    }
+    const cells: PlaneGridCell[] = [];
+    for (const key of allPlaneKeys(n)) {
+      const [i, j] = planeFromKey(key);
+      const chosen = spin.has(key);
+      const spinning = live.has(key);
+      const isBase = base.has(key);
+      cells.push({
+        i,
+        j,
+        spinning,
+        pending: chosen && !spinning,
+        base: isBase,
+        blocked: !chosen && !isBase && full,
+      });
+    }
+    return cells;
+  }
+
+  /**
+   * プリセットの平面集合。
+   *
+   * **上限で切ったことは黙らない** ── 切った枚数は `spinSummary()` が出し、
+   * パネルの計器がそれを表示する。静かな切り捨ては「全部やった」に見える。
+   */
+  spinPreset(kind: 'default' | 'depth' | 'pose' | 'all'): number[] | null {
+    if (kind === 'default') return null;
+    const n = this.params.n;
+    const base = this.baseKeys();
+    const wanted: number[] = [...base];
+    const push = (i: number, j: number): void => {
+      const key = planeKey(i, j);
+      if (!wanted.includes(key)) wanted.push(key);
+    };
+    if (kind === 'depth') {
+      // 最終軸(深度)を含む平面を全部。色と線幅が読む軸へ、いちばん多く手を入れる
+      for (let i = 0; i < n - 1; i++) push(i, n - 1);
+    } else if (kind === 'pose') {
+      // 可視 3 軸で閉じた 3 枚。3D 空間内での姿勢がいちばんよく動く
+      push(0, 1);
+      push(0, 2);
+      push(1, 2);
+    } else {
+      for (const key of allPlaneKeys(n)) if (!wanted.includes(key)) wanted.push(key);
+    }
+    return wanted;
+  }
+
+  /**
+   * いまの選択がプリセットと一致するか。
+   * **解決後どうしを比べる** ── プリセットは希望の形で書いてよい代わりに、
+   * 範囲外のキーを落としたあとの集合と突き合わせないと、自分自身と一致しなくなる。
+   */
+  private matchesPreset(kind: 'default' | 'depth' | 'pose' | 'all'): boolean {
+    const wanted = this.spinPreset(kind);
+    if (wanted === null) return this.params.spin === null;
+    if (this.params.spin === null) return false;
+    const now = this.effectiveSpin();
+    const target = new Set(wanted.filter((key) => {
+      const [i, j] = planeFromKey(key);
+      return i < j && j < this.params.n;
+    }));
+    if (now.size !== target.size) return false;
+    for (const key of target) if (!now.has(key)) return false;
+    return true;
+  }
+
+  /** 「回っている枚数 / 取りうる枚数」と、上限で載らなかった枚数 */
+  spinSummary(): { spinning: number; total: number; dropped: number } {
+    const n = this.params.n;
+    const spin = this.effectiveSpin();
+    const base = this.baseKeys();
+    let extras = 0;
+    for (const key of spin) if (!base.has(key)) extras++;
+    const capacity = MAX_PLANE_ROTATIONS - base.size;
+    return {
+      spinning: Math.min(spin.size, base.size + capacity),
+      total: allPlaneKeys(n).length,
+      dropped: Math.max(0, extras - capacity),
+    };
   }
 
   update(dt: number, t: number): void {
@@ -555,7 +819,7 @@ export class PolytopeExhibit implements Exhibit {
 
     // 平面は投影モードに従属し、深度スケールは平面に従属する。だから
     // **投影を切り替えたときも**この順で張り直す必要がある(形状変更だけではない)。
-    this.pickPlanes(poly.n, perspective);
+    this.pickPlanes();
     this.depthScale = this.computeDepthScale(poly);
 
     let dist = this.params.dist;
@@ -628,21 +892,42 @@ export class PolytopeExhibit implements Exhibit {
   }
 
   /**
-   * 回転平面を張り直す(tumble.ts が条件を持っている)。
+   * いま回す平面の集合。**params.spin が null なら形状ごとの既定に従う。**
+   * n を下げたときに残る範囲外のキーはここで落とす(選択は保つ)。
+   */
+  private effectiveSpin(): Set<number> {
+    const n = this.params.n;
+    const perspective = this.params.projection === 'perspective';
+    const chosen = this.params.spin;
+    if (chosen === null) return defaultSpin(n, perspective);
+    const out = new Set<number>();
+    for (const key of chosen) {
+      const [i, j] = planeFromKey(key);
+      if (i >= 0 && j < n && i < j) out.add(key);
+    }
+    return out;
+  }
+
+  /**
+   * 回転平面を張り直す(条件と「OFF = 凍結」の規則は tumble.ts が持っている)。
    *
    * **投影モードが変わったら必ず呼ぶこと。** 直交は「すべての軸が可視 3 軸へ
    * 到達する」ことを要求し、透視は要求しない ── 条件が違うので平面の組も違う。
    */
-  private pickPlanes(n: number, perspective: boolean): void {
-    const plan = planTumble(n, perspective);
+  private pickPlanes(): void {
+    const plan = planRotations(
+      this.params.n,
+      this.params.projection === 'perspective',
+      this.effectiveSpin(),
+    );
     const rots = this.rots;
     rots.length = 0;
-    for (let k = 0; k < plan.planes.length; k++) {
+    for (let k = 0; k < plan.length; k++) {
       const rot = this.rotPool[k];
-      rot.i = plan.planes[k][0];
-      rot.j = plan.planes[k][1];
-      this.omegas[k] = plan.omegas[k];
-      this.phases[k] = plan.phases[k];
+      rot.i = plan[k].i;
+      rot.j = plan[k].j;
+      this.omegas[k] = plan[k].omega;
+      this.phases[k] = plan[k].phase;
       rots.push(rot);
     }
   }

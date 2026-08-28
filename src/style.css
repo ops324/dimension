@@ -1618,6 +1618,117 @@ body.mode-gallery #perspective-caption {
   background: linear-gradient(90deg, rgba(232, 236, 251, 0.14), rgba(232, 236, 251, 0));
 }
 
+/* --- 回転平面の升目(Phase 43)-----------------------------------------
+
+   升は 3 状態を持つ: 回っている(塗り + 光)/ 凍結(枠 + 中央の点)/ 空。
+   **凍結が「無い」ではなく「止まっている」に見えること**が要なので、
+   空の升とは中央の点で区別する ── 枠だけの差では暗い画面で読めない。
+
+   升の一辺は n=10 で ~30px と、この作品のタップ標的の閾値 44px を割る。
+   だから**ボトムシート版レイアウトとタッチ環境では升目ごと畳む**(下の
+   メディアクエリ)── そこではプリセットのボタンが同じことをする。
+   幅で判定しないのは Phase 33 と同じ理由で、タッチスクリーン付きの
+   デスクトップは (hover: hover) を返すから升目が出てよい。 */
+
+.pn-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.pn-grid.is-disabled {
+  opacity: 0.32;
+}
+
+.pn-grid-table {
+  display: grid;
+  grid-template-columns: repeat(var(--pn-grid-cols, 10), minmax(0, 1fr));
+  gap: 3px;
+}
+
+.pn-grid-axis {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 0.55rem;
+  letter-spacing: 0;
+  color: rgba(151, 160, 196, 0.5);
+}
+
+.pn-grid-blank,
+.pn-grid-cell {
+  aspect-ratio: 1;
+  min-width: 0;
+  border-radius: 4px;
+}
+
+.pn-grid-blank {
+  background: none;
+}
+
+.pn-grid-cell {
+  position: relative;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  background: rgba(255, 255, 255, 0.02);
+  cursor: pointer;
+  transition:
+    background var(--t-fast) linear,
+    border-color var(--t-fast) linear,
+    box-shadow var(--t-fast) linear;
+}
+
+.pn-grid-cell:hover:not(:disabled) {
+  border-color: rgba(79, 216, 255, 0.4);
+  background: rgba(79, 216, 255, 0.08);
+}
+
+/* 凍結: 回っていないが列には居る。中央の点がそれを言う */
+.pn-grid-cell.is-frozen::after {
+  content: '';
+  position: absolute;
+  inset: 50% auto auto 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: rgba(151, 160, 196, 0.75);
+  translate: -50% -50%;
+}
+
+.pn-grid-cell.is-on {
+  border-color: rgba(79, 216, 255, 0.55);
+  background: linear-gradient(120deg, rgba(79, 216, 255, 0.34), rgba(157, 107, 255, 0.26));
+  box-shadow:
+    inset 0 0 0 1px rgba(79, 216, 255, 0.28),
+    0 8px 22px -16px rgba(79, 216, 255, 0.95);
+}
+
+/* 保留: 選ばれてはいるが上限で列に載らなかった。破線が「順番待ち」を言う */
+.pn-grid-cell.is-pending {
+  border-style: dashed;
+  border-color: rgba(157, 107, 255, 0.5);
+  background: rgba(157, 107, 255, 0.06);
+}
+
+.pn-grid-cell.is-blocked {
+  opacity: 0.28;
+  cursor: default;
+}
+
+.pn-grid-axis.is-hidden,
+.pn-grid-blank.is-hidden,
+.pn-grid-cell.is-hidden {
+  display: none;
+}
+
+@media (max-width: 768px) and (min-height: 600px), (max-width: 768px) and (orientation: portrait), (hover: none) {
+  .pn-grid {
+    display: none;
+  }
+}
+
 .pn-note {
   margin: 0;
   font-size: 0.62rem;

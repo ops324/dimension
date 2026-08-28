@@ -71,8 +71,87 @@ const ORTHO_OMEGAS: readonly number[] = ORTHO_OMEGA_PRIMES.map(
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const orthoPhase = (k: number): number => ((k + 1) * GOLDEN_ANGLE) % (2 * Math.PI);
 
-/** 平面の最大枚数(= n=10 の直交)。バッファ確保側の上限に使う */
+/** 自動タンブルの平面の最大枚数(= n=10 の直交)。 */
 export const MAX_TUMBLE_PLANES = ORTHO_OMEGAS.length;
+
+/**
+ * ユーザーが足す平面ぶんの素数(Phase 43)。
+ *
+ * 基底の 9 個(2..23)と**重ならない**素数を取る。√p が ℚ 上一次独立である以上、
+ * 基底の ω とも互いとも比が有理数にならない
+ * (`PERSPECTIVE_OMEGAS` の 0.31 / 0.23√2 / 0.17√5 とも同じ理由で衝突しない)。
+ *
+ * **枚数は 13 必要**である ── 追加できる最大は「上限 16 − 最小の基底 3(透視)」で、
+ * 7 個しか置かないと透視の n≥6 で素数を使い切って ω が循環し、
+ * **比が 1 になる 2 枚**ができる = 合成姿勢が周期を持つ(実測で踏んだ)。
+ */
+const EXTRA_OMEGA_PRIMES = [29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73, 79] as const;
+
+/**
+ * 追加平面の角速度の帯。**基底の 0.21〜0.39 rad/s に揃える。**
+ *
+ * `ORTHO_OMEGA_BASE + SPAN·√p` をそのまま延長すると p=79 で 0.62 rad/s になり、
+ * ユーザーが足した平面だけが目に見えて速く回る。√p の**小数部**を取れば帯に
+ * 収まり、しかも無理性は失われない ── frac(√p) = √p − ⌊√p⌋ は有理数を引いた
+ * だけなので、ω = (A − SPAN·⌊√p⌋) + SPAN·√p、つまり「有理数 + 有理数×√p」の
+ * 形のままである。
+ */
+const EXTRA_OMEGA_BASE = 0.21;
+const EXTRA_OMEGA_SPAN = 0.18;
+
+/**
+ * 回転列の最大長(Phase 43)。
+ *
+ * **C(10,2) = 45 ではない。** 45 枚を毎フレーム回すと 10-cube の直交で
+ * 1.93ms/frame(既存 9 枚の 3.2 倍・透視 3 枚の 5.5 倍)になり、
+ * 品質ガバナーは**それに効く手を持っていない** ── 見ているのはフレーム時間だけで、
+ * 打てるのは DPR / MSAA / ブルーム / 星密度、つまり GPU 側だけである。
+ * しかも降格すると 1 セッションに 1 度しかない再昇格の権利を無駄に使う。
+ * 16 枚なら実測 ≈0.85ms(既存比 1.4 倍)。**上限は UI 側で持つ。**
+ */
+export const MAX_PLANE_ROTATIONS = 16;
+
+/** 追加平面 k(0 始まり)の角速度 */
+export function extraOmega(k: number): number {
+  const p = EXTRA_OMEGA_PRIMES[k % EXTRA_OMEGA_PRIMES.length];
+  const root = Math.sqrt(p);
+  return EXTRA_OMEGA_BASE + EXTRA_OMEGA_SPAN * (root - Math.floor(root));
+}
+
+/**
+ * 追加平面 k の初期位相。基底の黄金角の列を**そのまま延長する**。
+ *
+ * 位相が要るのは飾りではない ── **t = 0 ではどんな平面でも Givens は恒等**
+ * なので、位相を与えないとユーザーが足した平面は起動直後の 1 秒を何もしない
+ * (罠 #20 の末尾)。
+ */
+export function extraPhase(k: number): number {
+  return orthoPhase(ORTHO_OMEGAS.length + k);
+}
+
+/**
+ * 回転平面 (i, j) の整数キー。i < j に正規化してから畳む。
+ * 16 進む幅を取るのは `MAX_N`(投影の上限)に合わせたため ── n を広げても
+ * キーの意味が変わらない。
+ */
+const KEY_STRIDE = 16;
+
+export function planeKey(i: number, j: number): number {
+  return i < j ? i * KEY_STRIDE + j : j * KEY_STRIDE + i;
+}
+
+export function planeFromKey(key: number): readonly [number, number] {
+  return [(key / KEY_STRIDE) | 0, key % KEY_STRIDE];
+}
+
+/** n 次元で取りうる全平面 C(n,2) のキー(i 昇順・j 昇順で安定) */
+export function allPlaneKeys(n: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < n - 1; i++) {
+    for (let j = i + 1; j < n; j++) out.push(planeKey(i, j));
+  }
+  return out;
+}
 
 /**
  * n と投影モードから回転平面を決める。
@@ -128,6 +207,95 @@ export function planTumble(n: number, perspective: boolean): TumblePlan {
   phases.push(orthoPhase(last - 1), orthoPhase(last));
 
   return { planes, omegas, phases };
+}
+
+/* ------------------------------------------- ユーザーが選ぶ回転平面(Phase 43) */
+
+/**
+ * 回転列の 1 枚。`planRotations` が返す完成形で、展示はこれを写すだけ。
+ */
+export interface PlaneRotationPlan {
+  readonly i: number;
+  readonly j: number;
+  /** 角速度(rad/s)。**0 は「凍結」であって「無い」ではない** */
+  readonly omega: number;
+  /** 初期位相(rad) */
+  readonly phase: number;
+}
+
+/** その形状・投影での既定の回す平面(= `planTumble` が選んだ組)のキー集合 */
+export function defaultSpin(n: number, perspective: boolean): Set<number> {
+  const plan = planTumble(n, perspective);
+  return new Set(plan.planes.map(([i, j]) => planeKey(i, j)));
+}
+
+/**
+ * 「どの平面を回すか」の選択から、実際に `rotateBatch` へ渡す回転列を組む。
+ *
+ * ## OFF は「消す」ではなく「凍結」である
+ *
+ * これがこの機能の設計そのもの。`planTumble` が選んだ平面は**必ず列に残り**、
+ * 選択から外れたときは ω = 0(位相 φ はそのまま)になる。ユーザーは回転を
+ * 止められるが、**軸の混ざりは取り上げられない**。
+ *
+ * 引き算を許すとどうなるかは実測してある(10-cube・直交・7 姿勢の最悪値):
+ *
+ * | 構成 | 可視 3 軸への到達(最小) | 潰れた辺 | 相異なる頂点 |
+ * |---|---|---|---|
+ * | 既定の 9 枚 | 2.03e-2 | 0 / 5,120 | 1,024 / 1,024 |
+ * | **凍結した基底のみ**(全 OFF) | **4.07e-2** | **0** | **1,024** |
+ * | 素で可視 3 軸だけを選択 | **0** | **3,584** | **8** |
+ *
+ * 最下段が「消す」を許した場合で、**Phase 37 のバグ(2,560 本)より悪い退化に
+ * UI から到達できる**ことになる。しかも症状は「絵が壊れる」ではなく
+ * 「**n を上げても絵が変わらない**」なので、触っている本人には見えない(罠 #20)。
+ *
+ * 凍結で条件④が保たれるのは、既にある設計のおかげである ── 黄金角の初期位相
+ * (`orthoPhase`)は **ω = 0 でも Givens を恒等にしない**。位相は飾りではなく
+ * 安全網だった。
+ *
+ * (厳密には、ユーザー側の回転の可視 3 行が凍結した鎖の第 k 列をちょうど消す
+ * 瞬間は測度 0 で起こりうる。消えるのは**全時刻で軸が核に落ちる**という
+ * 構造的な退化のほうで、それがこの機能で守りたかったものである。)
+ *
+ * @param spin 回したい平面のキー集合(`planeKey`)。基底に無いキーは追加平面になる
+ */
+export function planRotations(
+  n: number,
+  perspective: boolean,
+  spin: ReadonlySet<number>,
+): PlaneRotationPlan[] {
+  const plan = planTumble(n, perspective);
+  const out: PlaneRotationPlan[] = [];
+  const base = new Set<number>();
+
+  for (let k = 0; k < plan.planes.length; k++) {
+    const [i, j] = plan.planes[k];
+    const key = planeKey(i, j);
+    base.add(key);
+    out.push({
+      i,
+      j,
+      omega: spin.has(key) ? plan.omegas[k] : 0,
+      phase: plan.phases[k],
+    });
+  }
+
+  let extra = 0;
+  for (const key of allPlaneKeys(n)) {
+    if (base.has(key) || !spin.has(key)) continue;
+    if (out.length >= MAX_PLANE_ROTATIONS) break; // 上限は静かに切らない(呼び出し側が数を出す)
+    const [i, j] = planeFromKey(key);
+    out.push({ i, j, omega: extraOmega(extra), phase: extraPhase(extra) });
+    extra++;
+  }
+
+  return out;
+}
+
+/** `spin` のうち実際に列へ載る枚数(上限で切り落とされた数を呼び出し側が知るため) */
+export function countRotations(n: number, perspective: boolean, spin: ReadonlySet<number>): number {
+  return planRotations(n, perspective, spin).length;
 }
 
 /**
