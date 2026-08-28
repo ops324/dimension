@@ -9,10 +9,19 @@ import type { ScrollDirector } from './scrollDirector';
 import type { Route, Router } from './route';
 import type { Starfield } from '../render/starfield';
 import type { Exhibit } from '../scenes/exhibit';
-import { HopfExhibit } from '../scenes/hopfExhibit';
-import { CliffordExhibit } from '../scenes/cliffordExhibit';
-import { PolytopeExhibit } from '../scenes/polytopeExhibit';
-import { PerspectiveExhibit, type CameraHint } from '../scenes/perspectiveExhibit';
+import { HopfExhibit, type HopfParams } from '../scenes/hopfExhibit';
+import { CliffordExhibit, type CliffordParams } from '../scenes/cliffordExhibit';
+import { PolytopeExhibit, type PolytopeParams } from '../scenes/polytopeExhibit';
+import { PerspectiveExhibit, type CameraHint, type PerspectiveParams } from '../scenes/perspectiveExhibit';
+import {
+  CLIFFORD_DEFAULTS,
+  HOPF_DEFAULTS,
+  PERSPECTIVE_DEFAULTS,
+  POLYTOPE_DEFAULTS,
+  decodeState,
+  encodeState,
+  type ExhibitOverrides,
+} from './exhibitState';
 import { EXHIBIT_INFO, type ExhibitInfo } from '../ui/content';
 import { TransitionOverlay } from '../ui/components/TransitionOverlay';
 import { Tabs } from '../ui/components/Tabs';
@@ -49,8 +58,15 @@ export interface ExhibitEntry {
   readonly home: readonly [number, number, number];
   readonly minDistance: number;
   readonly maxDistance: number;
-  /** 遅延生成。ギャラリー初回入場時に 4 つまとめて構築する */
-  create(): Exhibit;
+  /**
+   * 遅延生成。ギャラリー初回入場時に 4 つまとめて構築する。
+   *
+   * `overrides` は URL から復号したパラメータ(Phase 44)。**注入は
+   * コンストラクタ引数でなければならない** ── `init()` の後に setter を叩くと
+   * 4 展示とも `if (this.initialized) rebuild()` なので、既定で 1 回 + 復元で
+   * 1 回の**二重**になる(hopf は 230,400 線分の作り直し)。
+   */
+  create(overrides?: ExhibitOverrides): Exhibit;
 }
 
 /**
@@ -85,28 +101,28 @@ export const EXHIBIT_REGISTRY: readonly ExhibitEntry[] = [
     home: [2.7, 1.9, 5.0],
     minDistance: 2.2,
     maxDistance: 20,
-    create: () => new PolytopeExhibit({ family: 'cube', n: 7, projection: 'perspective' }),
+    create: (o) => new PolytopeExhibit({ ...POLYTOPE_DEFAULTS, ...o } as PolytopeParams),
   },
   {
     id: 'perspective',
     home: [0, 1.6, 7.2],
     minDistance: 2.5,
     maxDistance: 25,
-    create: () => new PerspectiveExhibit(),
+    create: (o) => new PerspectiveExhibit({ ...PERSPECTIVE_DEFAULTS, ...o } as PerspectiveParams),
   },
   {
     id: 'clifford',
     home: [3.0, 2.2, 6.5],
     minDistance: 2.5,
     maxDistance: 30,
-    create: () => new CliffordExhibit(),
+    create: (o) => new CliffordExhibit({ ...CLIFFORD_DEFAULTS, ...o } as CliffordParams),
   },
   {
     id: 'hopf',
     home: [3.4, 3.0, 7.6],
     minDistance: 2.5,
     maxDistance: 40,
-    create: () => new HopfExhibit(),
+    create: (o) => new HopfExhibit({ ...HOPF_DEFAULTS, ...o } as HopfParams),
   },
 ];
 
@@ -125,6 +141,12 @@ export interface GalleryOptions {
 }
 
 /** タブ切替の reveal フェードアウト待ち(ms)。展示側の REVEAL_RATE と噛み合う値 */
+/**
+ * URL への書き戻しの落ち着き待ち(ms)。engine / Panel の 150ms より長い
+ * 理由は `schedulePersist` の注を参照(履歴はレート制限のある共有資源)。
+ */
+const PARAM_SETTLE_MS = 500;
+
 const SWITCH_MS = 380;
 /** カメラのホーム復帰トゥイーン(ms)と追従レート */
 const TWEEN_MS = 600;
@@ -198,6 +220,15 @@ export class Gallery {
    * iOS の端スワイプ連打はこれより速い。落とすと**履歴インデックスが恒久的にずれる**。
    */
   private pendingRoute: Route | null = null;
+  /**
+   * 初回入場で 1 展示へ流し込む URL のパラメータ(Phase 44)。
+   * `create()` の引数として渡すためだけに預かる ── `init()` の後に setter で
+   * 入れると rebuild が二重に走る。
+   */
+  private pendingState: string | null = null;
+  /** URL への書き戻しの間引きタイマー(0 = 無し)と、最後に書いた値 */
+  private paramTimer = 0;
+  private lastState = '';
 
   /** カメラトゥイーン(毎フレームのアロケーションを避けるため使い回す) */
   private readonly tweenTarget = new Vector3();
@@ -255,6 +286,19 @@ export class Gallery {
     // パネルは展示が切り替わるたびに作り直される tabpanel。タブ側から
     // aria-labelledby を張るので、ロールはここで一度だけ与えておく
     this.panelRoot.setAttribute('role', 'tabpanel');
+    /*
+      URL への書き戻しの発火源(Phase 44)。
+
+      **委譲リスナ 1 本**で受け、中身は見ない ── 落ち着いてから params を
+      読み直して符号化する。clifford / hopf のスライダーは setter を通らず
+      `p.omega1 = v` と直接代入しているので、setter へフックを足す設計では
+      届かない。この形なら**将来どんな操作子が増えても自動的に正しい**
+      (PERSPECTIVE のパネルが採る「適用後の params を読み直して自分を合わせる」
+      と同じ思想)。
+    */
+    this.panelRoot.addEventListener('input', this.schedulePersist);
+    this.panelRoot.addEventListener('change', this.schedulePersist);
+    this.panelRoot.addEventListener('click', this.schedulePersist);
 
     this.tabs = new Tabs({
       container: this.tabsEl,
@@ -328,8 +372,11 @@ export class Gallery {
       return;
     }
     if (next.mode === 'gallery') {
-      if (this.mode !== 'gallery') this.enterGallery(next.exhibit, instant);
-      else if (next.exhibit !== this.activeId) this.select(next.exhibit);
+      if (this.mode !== 'gallery') {
+        // 展示はまだ生まれていないかもしれない。生成の引数として使うので預かる
+        this.pendingState = next.state;
+        this.enterGallery(next.exhibit, instant);
+      } else if (next.exhibit !== this.activeId) this.select(next.exhibit);
     } else if (this.mode === 'gallery') {
       this.exitGallery(next.scrollY);
     }
@@ -341,7 +388,9 @@ export class Gallery {
    */
   requestEnter(): void {
     if (this.mode === 'gallery' || this.busy) return;
-    this.router.enter(this.activeId, window.scrollY);
+    // 展示がまだ生成されていなければ `null` ── これが Phase 41 の
+    // 「CTA は必ず既定へ着地する」を、例外を書かずに満たす
+    this.router.enter(this.activeId, window.scrollY, this.stateOf(this.activeId));
   }
 
   /** 遷移が明けたら預かっていたルートを流す */
@@ -406,6 +455,9 @@ export class Gallery {
         this.buildPanel(exhibit);
         this.applyInfo(this.activeId);
       }
+      // いま URL に載っている値を基準にする。これを置かないと、入場直後の
+      // 最初の click(パネルのどこでもよい)で冪等ガードが空振りする
+      this.lastState = this.stateOf(this.activeId) ?? '';
 
       const controls = this.ensureControls();
       controls.enabled = true;
@@ -488,7 +540,8 @@ export class Gallery {
     window.dispatchEvent(new CustomEvent<ExhibitId>('dimension:tab', { detail: id }));
     // URL を今の展示へ揃える。**replaceState なので popstate は起きず**、
     // ここから applyRoute へ戻ってくる経路は無い(だから抑制フラグが要らない)
-    this.router.select(id);
+    this.router.select(id, this.stateOf(id));
+    this.lastState = this.stateOf(id) ?? '';
     // タブの下線と見出しは**押した瞬間に**動きはじめる ── 展示の差し替えを
     // 待つ 380ms のあいだ、UI だけが先に次の展示を指している状態を作る
     this.tabs.setActive(id);
@@ -568,14 +621,70 @@ export class Gallery {
     }
   }
 
+  // --- 内部: URL への書き戻し(Phase 44)--------------------------------------
+
+  /**
+   * 展示 id のいまのパラメータを URL の値へ。まだ生成されていなければ `null`。
+   * `instanceof` で絞るのは、`Exhibit` インターフェースが `params` を
+   * 持たないため(4 クラスがそれぞれ公開しているだけ)。
+   */
+  private stateOf(id: ExhibitId): string | null {
+    const exhibit = this.exhibits.get(id);
+    if (exhibit === undefined) return null;
+    const known =
+      exhibit instanceof PolytopeExhibit ||
+      exhibit instanceof PerspectiveExhibit ||
+      exhibit instanceof CliffordExhibit ||
+      exhibit instanceof HopfExhibit;
+    if (!known) return null;
+    const encoded = encodeState(id, exhibit.params as unknown as ExhibitOverrides);
+    return encoded === '' ? null : encoded;
+  }
+
+  /**
+   * URL への書き戻しを予約する。`engine` / `Panel` のリサイズ間引きと同型
+   * (clear → setTimeout、数値フィールドに timer id、0 を「無し」の番兵に)。
+   *
+   * **500ms と長めに取る。** リサイズ間引き(150ms)より長いのは、履歴が
+   * レイアウト計測と違って**レート制限のある共有資源**だからだ。
+   * `Slider` は `input` ごとに `onInput` を呼ぶので、hopf の FIBERS は
+   * 1 ドラッグで ~98 回発火する ── 毎回 `replaceState` すると WebKit の
+   * レート制限に 1 ジェスチャで到達し、以後 URL が黙って更新されなくなる。
+   * そうなると**タブ切替の `select()` まで巻き添えで死ぬ**。
+   */
+  private readonly schedulePersist = (): void => {
+    if (this.paramTimer !== 0) window.clearTimeout(this.paramTimer);
+    this.paramTimer = window.setTimeout(this.persistState, PARAM_SETTLE_MS);
+  };
+
+  private readonly persistState = (): void => {
+    this.paramTimer = 0;
+    // 幕の裏では書かない(pendingRoute の機構と食い合う)。次の入力で再度予約される
+    if (this.mode !== 'gallery' || this.busy || this.switchTimer !== 0) return;
+    const next = this.stateOf(this.activeId) ?? '';
+    if (next === this.lastState) return; // 冪等ガード: 変わっていなければ触らない
+    this.lastState = next;
+    this.router.setState(next === '' ? null : next);
+  };
+
   // --- 内部: 生成 ------------------------------------------------------------
 
-  /** 4 展示を初回入場時にまとめて構築する(以後はキャッシュ済みで再入場は即時) */
+  /**
+   * 4 展示を初回入場時にまとめて構築する(以後はキャッシュ済みで再入場は即時)。
+   *
+   * URL のパラメータは**該当する 1 展示だけ**へ渡す。残り 3 つは出荷時の既定で
+   * 生まれる ── そうしておくと、終章の CTA から入った回は必ず既定へ着地する
+   * (Phase 41 の「約束と payoff が 1 クリックで閉じる」)。
+   */
   private ensureExhibits(): void {
     if (this.exhibits.size > 0) return;
     const t0 = performance.now();
+    const state = this.pendingState;
+    this.pendingState = null;
     for (const entry of EXHIBIT_REGISTRY) {
-      const exhibit = entry.create();
+      const exhibit = entry.create(
+        state !== null && entry.id === this.activeId ? decodeState(entry.id, state) : undefined,
+      );
       exhibit.init({ engine: this.engine });
       this.exhibits.set(entry.id, exhibit);
       if (exhibit instanceof PerspectiveExhibit) this.perspective = exhibit;
