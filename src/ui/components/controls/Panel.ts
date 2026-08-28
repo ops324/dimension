@@ -46,15 +46,27 @@ import { createSegmented, type SegmentedControl, type SegmentedSpec } from './Se
 import { createToggle, type ToggleControl, type ToggleSpec } from './Toggle';
 import { createReadout, type ReadoutSpec, type ReadoutUpdate } from './Readout';
 import { createPanelButton, type ButtonControl, type ButtonSpec } from './PanelButton';
+import {
+  createPlaneGrid,
+  type PlaneGridCell,
+  type PlaneGridControl,
+  type PlaneGridSpec,
+} from './PlaneGrid';
 
 export type { SliderSpec } from './Slider';
 export type { SegmentedSpec } from './Segmented';
 export type { ToggleSpec } from './Toggle';
 export type { ReadoutSpec, ReadoutUpdate } from './Readout';
 export type { ButtonSpec } from './PanelButton';
+export type { PlaneGridCell, PlaneGridSpec } from './PlaneGrid';
 
 /** key で後から触れる部品。kind による判別可能なユニオン */
-export type PanelControl = SliderControl | SegmentedControl | ToggleControl | ButtonControl;
+export type PanelControl =
+  | SliderControl
+  | SegmentedControl
+  | ToggleControl
+  | ButtonControl
+  | PlaneGridControl;
 
 export interface PanelBuilder {
   /** 呼び出し側が渡した永続コンテナ(開閉クラスはここに付く) */
@@ -66,6 +78,8 @@ export interface PanelBuilder {
   toggle(spec: ToggleSpec): PanelBuilder;
   readout(spec: ReadoutSpec): ReadoutUpdate;
   button(spec: ButtonSpec): PanelBuilder;
+  /** 回転平面の升目(Phase 43)。軸数が変わるときは作り直す */
+  planeGrid(spec: PlaneGridSpec): PanelBuilder;
   divider(): PanelBuilder;
   note(text: string): PanelBuilder;
   /** key を付けた部品の有効・無効を切り替える(視覚状態 + 操作の遮断) */
@@ -76,6 +90,8 @@ export interface PanelBuilder {
   setOptionDisabled(key: string, option: string, disabled: boolean): void;
   /** button に「今この状態にある」印を立てる(プリセットの現在地。button 以外は無視) */
   setActive(key: string, active: boolean): void;
+  /** 升目の軸数と状態を塗り替える(planeGrid 以外の key は無視) */
+  paintPlaneGrid(key: string, axes: number, cells: readonly PlaneGridCell[]): void;
   /** 部品のリスナと ResizeObserver を畳む(次の createPanel が自動で呼ぶ) */
   destroy(): void;
 }
@@ -250,6 +266,10 @@ class Panel implements PanelBuilder, Component {
     return this.add(createPanelButton(spec), spec.key);
   }
 
+  planeGrid(spec: PlaneGridSpec): PanelBuilder {
+    return this.add(createPlaneGrid(spec), spec.key);
+  }
+
   readout(spec: ReadoutSpec): ReadoutUpdate {
     const control = createReadout(spec);
     this.body.append(control.el);
@@ -294,6 +314,11 @@ class Panel implements PanelBuilder, Component {
     if (control !== undefined && control.kind === 'segmented') {
       control.setOptionDisabled(option, disabled);
     }
+  }
+
+  paintPlaneGrid(key: string, axes: number, cells: readonly PlaneGridCell[]): void {
+    const control = this.keyed.get(key);
+    if (control !== undefined && control.kind === 'planeGrid') control.paint(axes, cells);
   }
 
   setActive(key: string, active: boolean): void {

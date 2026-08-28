@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_TUMBLE_PLANES, planSlicePlanes, planTumble } from '../math/tumble';
+import {
+  MAX_PLANE_ROTATIONS,
+  MAX_TUMBLE_PLANES,
+  allPlaneKeys,
+  defaultSpin,
+  planRotations,
+  planSlicePlanes,
+  planTumble,
+  planeFromKey,
+  planeKey,
+} from '../math/tumble';
 import { rotateBatch, type PlaneRotation } from '../math/rotation';
 import { projectOrtho } from '../math/projection';
 import { makePolytope, type PolytopeFamily } from '../math/polytopes';
@@ -251,5 +261,164 @@ describe('planSlicePlanes', () => {
     expect(planSlicePlanes(4)).toEqual([[0, 2], [1, 3], [0, 3]]);
     expect(planSlicePlanes(5)).toEqual([[0, 2], [1, 4], [2, 3]]);
     expect(planSlicePlanes(6)).toEqual([[0, 2], [1, 5], [3, 4]]);
+  });
+});
+
+/* ---------------------------------------- ユーザーが選ぶ回転平面(Phase 43) */
+
+/** 任意の回転列で合成行列を作る(compose のユーザー選択版) */
+function composeWith(
+  n: number,
+  plan: readonly { i: number; j: number; omega: number; phase: number }[],
+  t: number,
+): Float64Array {
+  const basis = new Float64Array(n * n);
+  for (let k = 0; k < n; k++) basis[k * n + k] = 1;
+  const out = new Float64Array(n * n);
+  rotateBatch(
+    basis,
+    out,
+    n,
+    n,
+    plan.map((p) => ({ i: p.i, j: p.j, angle: p.omega * t + p.phase })),
+  );
+  return out;
+}
+
+/** 直交投影で「軸 k が可視 3 軸へ届く量」の最小値 */
+function minReach(
+  n: number,
+  plan: readonly { i: number; j: number; omega: number; phase: number }[],
+  t: number,
+): number {
+  const m = composeWith(n, plan, t);
+  let min = Infinity;
+  for (let k = 0; k < n; k++) {
+    const reach = Math.max(Math.abs(m[k * n]), Math.abs(m[k * n + 1]), Math.abs(m[k * n + 2]));
+    if (reach < min) min = reach;
+  }
+  return min;
+}
+
+describe('planeKey', () => {
+  it('順序によらず同じキーになり、往復する', () => {
+    for (let i = 0; i < 10; i++) {
+      for (let j = i + 1; j < 10; j++) {
+        expect(planeKey(i, j)).toBe(planeKey(j, i));
+        expect(planeFromKey(planeKey(i, j))).toEqual([i, j]);
+      }
+    }
+  });
+
+  it('C(n,2) 枚をちょうど列挙する', () => {
+    for (let n = N_MIN; n <= N_MAX; n++) {
+      expect(new Set(allPlaneKeys(n)).size).toBe((n * (n - 1)) / 2);
+    }
+  });
+});
+
+describe('planRotations', () => {
+  it('既定の選択では planTumble と 1 枚も違わない(出荷時の絵が変わらない)', () => {
+    for (let n = N_MIN; n <= N_MAX; n++) {
+      for (const perspective of [true, false]) {
+        const plan = planTumble(n, perspective);
+        const got = planRotations(n, perspective, defaultSpin(n, perspective));
+        expect(got.length, `n=${n} persp=${perspective}`).toBe(plan.planes.length);
+        for (let k = 0; k < got.length; k++) {
+          expect([got[k].i, got[k].j]).toEqual([plan.planes[k][0], plan.planes[k][1]]);
+          expect(got[k].omega).toBe(plan.omegas[k]);
+          expect(got[k].phase).toBe(plan.phases[k] ?? 0);
+        }
+      }
+    }
+  });
+
+  it('OFF は「消す」ではなく「凍結」── 基底の平面は ω=0 で列に残る', () => {
+    for (let n = 4; n <= N_MAX; n++) {
+      const plan = planTumble(n, false);
+      const got = planRotations(n, false, new Set());
+      expect(got.length, `n=${n}`).toBe(plan.planes.length);
+      for (let k = 0; k < got.length; k++) {
+        expect(got[k].omega, `n=${n} 平面 ${k} が凍結していない`).toBe(0);
+        // 位相が残ることが安全網の本体。ω=0 でも Givens が恒等にならない
+        expect(got[k].phase, `n=${n} 平面 ${k} の位相が消えている`).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('全部 OFF にしても条件④が保たれる(直交で軸が投影の核へ落ちない)', () => {
+    for (let n = 4; n <= N_MAX; n++) {
+      for (const t of SAMPLES) {
+        const plan = planRotations(n, false, new Set());
+        expect(minReach(n, plan, t), `n=${n} t=${t}`).toBeGreaterThan(1e-3);
+      }
+    }
+  });
+
+  it('可視 3 軸だけを選んでも条件④が保たれる ── 素なら 3,584 本が潰れる組', () => {
+    /*
+      安全網が無ければここが最悪ケースになる。実測(10-cube・直交)では
+      素で (0,1)(0,2)(1,2) だけを回すと 5,120 辺のうち 3,584 本が長さ 0 に潰れ、
+      1,024 頂点が 8 か所へ重なった ── Phase 37 のバグ(2,560 本)より悪い。
+      凍結した基底が残るいまは、そこへ到達できない。
+    */
+    const spin = new Set([planeKey(0, 1), planeKey(0, 2), planeKey(1, 2)]);
+    for (let n = 4; n <= N_MAX; n++) {
+      for (const t of SAMPLES) {
+        const plan = planRotations(n, false, spin);
+        expect(minReach(n, plan, t), `n=${n} t=${t}`).toBeGreaterThan(1e-3);
+      }
+    }
+  });
+
+  it('列は上限を超えない ── プールと同じ長さで止まる', () => {
+    for (let n = N_MIN; n <= N_MAX; n++) {
+      for (const perspective of [true, false]) {
+        const all = new Set(allPlaneKeys(n));
+        const plan = planRotations(n, perspective, all);
+        expect(plan.length, `n=${n} persp=${perspective}`).toBeLessThanOrEqual(
+          MAX_PLANE_ROTATIONS,
+        );
+      }
+    }
+  });
+
+  it('どの 2 枚も角速度が一致しない(合成姿勢が周期を持たない)', () => {
+    for (let n = N_MIN; n <= N_MAX; n++) {
+      for (const perspective of [true, false]) {
+        const plan = planRotations(n, perspective, new Set(allPlaneKeys(n)));
+        const spinning = plan.filter((p) => p.omega > 0).map((p) => p.omega);
+        expect(new Set(spinning).size, `n=${n} persp=${perspective}`).toBe(spinning.length);
+      }
+    }
+  });
+
+  it('追加した平面にも位相が付く ── t=0 でどの平面も恒等になるため', () => {
+    const n = 6;
+    const spin = new Set([...defaultSpin(n, true), planeKey(0, 1), planeKey(3, 4)]);
+    const plan = planRotations(n, true, spin);
+    const base = defaultSpin(n, true);
+    for (const p of plan) {
+      if (base.has(planeKey(p.i, p.j))) continue;
+      expect(p.phase, `追加平面 (${p.i},${p.j}) の位相が 0`).toBeGreaterThan(0);
+      expect(p.omega).toBeGreaterThan(0);
+    }
+  });
+
+  it('上限は planTumble の基底より広い(追加の余地が必ず残る)', () => {
+    expect(MAX_PLANE_ROTATIONS).toBeGreaterThan(MAX_TUMBLE_PLANES);
+  });
+
+  it('追加平面の速度が基底と同じ帯に収まる ── 足した平面だけ速く回らない', () => {
+    for (let n = N_MIN; n <= N_MAX; n++) {
+      for (const perspective of [true, false]) {
+        const plan = planRotations(n, perspective, new Set(allPlaneKeys(n)));
+        for (const p of plan) {
+          if (p.omega === 0) continue;
+          expect(p.omega, `n=${n} 平面 (${p.i},${p.j}) の ω`).toBeGreaterThan(0.2);
+          expect(p.omega, `n=${n} 平面 (${p.i},${p.j}) の ω`).toBeLessThan(0.4);
+        }
+      }
+    }
   });
 });
