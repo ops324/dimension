@@ -9,23 +9,26 @@ import {
   polytopeName,
   polytopeTagline,
 } from '../ui/content';
+import { reachablePairs } from '../ui/perspectiveRange';
 
-/** パネルで実際に選べる範囲(perspectiveExhibit の OBSERVER/TARGET と同じ) */
-const OBSERVERS = [2, 3, 4];
-const TARGETS = [2, 3, 4, 5, 6];
 const MODES = ['slice', 'shadow', 'xray'];
 
-/** m ≠ n の到達しうる全組 */
-function reachable(): [number, number][] {
-  const out: [number, number][] = [];
-  for (const m of OBSERVERS) for (const n of TARGETS) if (m !== n) out.push([m, n]);
-  return out;
-}
+/**
+ * 到達しうる全組は**実装から導出する**(Phase 42)。
+ *
+ * ここには以前 `const OBSERVERS = [2,3,4]` と手で写した定数が置いてあり、
+ * コメントで「perspectiveExhibit と同じ」と宣言していた。写しは写し元が動いた
+ * 瞬間に嘘になる ── m の上限を 5 へ上げても、テストは古い 12 組を見たまま
+ * **緑で通り続ける**。範囲と規則は `ui/perspectiveRange.ts` の 1 本だけが持つ。
+ */
+const reachable = reachablePairs;
 
 describe('perspectiveTagline', () => {
-  it('到達しうる 12 組すべてに専用の一文がある(フォールバックへ落ちない)', () => {
+  it('到達しうる全組に専用の一文がある(フォールバックへ落ちない)', () => {
     const combos = reachable();
-    expect(combos.length).toBe(12);
+    // 数は書かない ── 範囲を広げたときに「数を直す」で済ませられると、
+    // 一文を足し忘れたことに気づけなくなる。個数の主張は下の「全部違う」が担う
+    expect(combos.length).toBeGreaterThan(0);
     for (const [m, n] of combos) {
       expect(PERSPECTIVE_TAGLINES[`${m}:${n}`], `m=${m} n=${n} の副題が無い`).toBeTypeOf('string');
     }
@@ -37,8 +40,9 @@ describe('perspectiveTagline', () => {
   });
 
   it('組が違えば一文も違う ── 設定を変えたのに同じ文、が起きない', () => {
-    const seen = new Set(reachable().map(([m, n]) => perspectiveTagline(m, n)));
-    expect(seen.size).toBe(12);
+    const combos = reachable();
+    const seen = new Set(combos.map(([m, n]) => perspectiveTagline(m, n)));
+    expect(seen.size).toBe(combos.length);
   });
 
   it('表に無い組でも必ず何かを返し、見下ろす側かどうかで言い分ける', () => {
@@ -61,6 +65,13 @@ describe('perspectiveCaption', () => {
   it('個別の組が無ければモード共通の一文へ落ちる', () => {
     expect(PERSPECTIVE_CAPTIONS['shadow:4:5']).toBeUndefined();
     expect(perspectiveCaption('shadow', 4, 5)).toBe(PERSPECTIVE_CAPTIONS['shadow']);
+  });
+
+  it('断面は m ごとに専用の一文を持つ ── 画面へ載るまでの段数が違う', () => {
+    // m=4 は一段、m=5 は二段の影を挟んでようやく 3D に載る。そこを言う文がある
+    expect(PERSPECTIVE_CAPTIONS['slice:4:6']).toBeTypeOf('string');
+    expect(PERSPECTIVE_CAPTIONS['slice:5:6']).toBeTypeOf('string');
+    expect(perspectiveCaption('slice', 5, 6)).not.toBe(perspectiveCaption('slice', 4, 6));
   });
 });
 

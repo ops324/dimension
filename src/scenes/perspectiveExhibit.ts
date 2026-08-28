@@ -9,6 +9,7 @@ import {
   type PolytopeFamily,
 } from '../math/polytopes';
 import { rotateBatch, type PlaneRotation } from '../math/rotation';
+import { planSlicePlanes } from '../math/tumble';
 import { projectPerspective } from '../math/projection';
 import {
   faceCountOfDim,
@@ -17,6 +18,14 @@ import {
   type FlatSliceGeometry,
 } from '../math/flatSlice';
 import { sphereSliceRadius } from '../math/slice';
+import {
+  TARGET_MAX,
+  TARGET_MIN,
+  isReachable,
+  resolveMode,
+  resolvePerspective,
+  type PerspectiveMode,
+} from '../ui/perspectiveRange';
 
 import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
@@ -43,14 +52,17 @@ import type { EngineCtx, Exhibit } from './exhibit';
  * 位置関係を外から見せる。メインビュー(知覚)との対比がこの展示の教育的な核。
  */
 
-export type PerspectiveMode = 'slice' | 'shadow' | 'xray';
+export type { PerspectiveMode } from '../ui/perspectiveRange';
 /** 対象の族。ポリトープ 3 種 + 解析的に断面が求まる n-球 */
 export type PerspectiveFamily = PolytopeFamily | 'sphere';
 
 export interface PerspectiveParams {
-  /** 観測者の次元 m。m=1(線の住人)は Phase 7/8 のストレッチなので 2..4 に丸める */
-  observer: 1 | 2 | 3 | 4;
-  /** 対象の次元 n(2..6)。m ≠ n */
+  /**
+   * 観測者の次元 m(2..5)。**m=1 は取らない** ── 理由は `ui/perspectiveRange.ts` の
+   * `OBSERVER_EXCLUDED` に 4 つ列挙してある(HUD 表現ではなく数学と描画が破綻する)。
+   */
+  observer: 2 | 3 | 4 | 5;
+  /** 対象の次元 n(2..6)。m ≠ n、かつ m > n なら n ≤ 3(X線俯瞰の場面がある範囲) */
   target: 2 | 3 | 4 | 5 | 6;
   family: PerspectiveFamily;
   /** m<n → slice|shadow、m>n → xray に自動で丸められる */
@@ -66,11 +78,6 @@ export interface CameraHint {
 }
 
 // --- 定数 ------------------------------------------------------------------
-
-const OBSERVER_MIN = 2;
-const OBSERVER_MAX = 4;
-const TARGET_MIN = 2;
-const TARGET_MAX = 6;
 
 /** 線幅(CSS px)。gl.lineWidth は使えないので Line2 のファットライン */
 const LINE_WIDTH = 2.6;
@@ -278,12 +285,6 @@ function setPlane(rot: PlaneRotation, i: number, j: number): void {
   rot.j = j;
 }
 
-/** 観測者 m と対象 n からモードを確定する(UI の要求は尊重しつつ矛盾を潰す) */
-function resolveMode(m: number, n: number, requested: PerspectiveMode): PerspectiveMode {
-  if (m > n) return 'xray'; // 高 → 低 は X 線俯瞰しかない
-  return requested === 'xray' ? 'slice' : requested;
-}
-
 /**
  * 代表的な視点(PRESETS)。**表として持つ**のが Phase 19 の要点である ──
  * 以前はボタン 3 つのベタ書きで、押した先の (m, n, mode, family) が
@@ -329,7 +330,14 @@ export class PerspectiveExhibit implements Exhibit {
   private vertBase!: Float64Array;
   /** 回転後の頂点 */
   private vertRot!: Float64Array;
-  /** sliceFlat の出力。線分ごとに端点 2 × **m 座標**(m ≤ n−1 なので確保量は据え置き) */
+  /**
+   * sliceFlat の出力。線分ごとに端点 2 × **m 座標**。
+   *
+   * 確保は `faces × 2 × (TARGET_MAX − 1)` ── ここは **m ≤ TARGET_MAX − 1** という
+   * 暗黙の契約に乗っている(Phase 42 で m=5 / n=6 を開けて**ちょうど飽和した**:
+   * cube n=6 の 2-面 240 本 × 2 端点 × 5 座標 = 2400 = 確保量)。
+   * `OBSERVER_MAX` を上げるか `TARGET_MAX` を上げるなら、**先にこの式を直すこと**。
+   */
   private sliceOut!: Float64Array;
   /** 断面端点 / 影の頂点を 3D へ落とした結果 */
   private packed3!: Float32Array;
@@ -511,8 +519,17 @@ export class PerspectiveExhibit implements Exhibit {
       panel.setValue('observer', String(p.observer));
       panel.setValue('target', String(p.target));
       panel.setValue('mode', p.mode);
+      /*
+        禁じ手は無効状態として見せる。ただし**灰色にするのは対象の側だけ**である。
+        この展示では OBSERVER が自由な軸で、TARGET が譲る ── m=n の解消が
+        最初から n を動かしていたのはそのためで、Phase 42 で足した
+        「見下ろせるのは n ≤ 3 まで」も同じ側へ寄せる。
+
+        観測者まで灰色にすると、既定の (3,4) で 4 枚中 2 枚が塞がる。
+        m を動かすことがこの展示の主題なのに、その主題が最初から半分死んで見える。
+      */
       for (let n = TARGET_MIN; n <= TARGET_MAX; n++) {
-        panel.setOptionDisabled('target', String(n), n === p.observer);
+        panel.setOptionDisabled('target', String(n), !isReachable(p.observer, n));
       }
       // 高 → 低(m > n)は X線俯瞰しかない。逆向きでは X線俯瞰が選べない
       const looksDown = p.observer > p.target;
@@ -557,13 +574,16 @@ export class PerspectiveExhibit implements Exhibit {
 
     panel.divider();
 
+    // ラベルは裸の数字。「2 次元」…「5 次元」の 4 枚は `.pn-seg-btn` の
+    // flex: 1 1 0 で 1 行に潰れる ── 高さの契約は折り返した瞬間に無効になる(罠 #15)
     panel.segmented({
       key: 'observer',
       label: 'OBSERVER / 観測者 m',
       options: [
-        ['2', '2 次元'],
-        ['3', '3 次元'],
-        ['4', '4 次元'],
+        ['2', '2'],
+        ['3', '3'],
+        ['4', '4'],
+        ['5', '5'],
       ],
       value: String(p.observer),
       onSelect: (v) => {
@@ -613,7 +633,7 @@ export class PerspectiveExhibit implements Exhibit {
     panel.note(
       '観測者と対象は同じ次元にできない(m ≠ n)。' +
         '低い側から覗くなら断面と影、高い側から見下ろすなら X線俯瞰 ── ' +
-        '選べない組み合わせは灰色になる。' +
+        '見下ろせるのは三次元までの世界だけで、それ以外の組み合わせは灰色になる。' +
         'いま見ている設定が上の代表的な視点と重なると、その行に印が点く。',
     );
 
@@ -622,18 +642,17 @@ export class PerspectiveExhibit implements Exhibit {
 
   // --- 公開 API --------------------------------------------------------------
 
-  /** 観測者 m / 対象 n の変更。m=n は矛盾なので n をずらして解消する */
+  /**
+   * 観測者 m / 対象 n の変更。
+   *
+   * 正規化(範囲・m ≠ n・X線の成立する n)は `rebuild()` が通す
+   * `resolvePerspective` に一任する ── ここで丸めると規則が二重実装になり、
+   * どちらかが古くなる。init 前は rebuild が走らないので、そのときだけ自分で通す。
+   */
   setPerspective(observer: number, target: number): void {
-    this.params.observer = clamp(
-      Math.round(observer),
-      OBSERVER_MIN,
-      OBSERVER_MAX,
-    ) as PerspectiveParams['observer'];
-    this.params.target = clamp(
-      Math.round(target),
-      TARGET_MIN,
-      TARGET_MAX,
-    ) as PerspectiveParams['target'];
+    const { m, n } = resolvePerspective(observer, target, this.requestedMode);
+    this.params.observer = m as PerspectiveParams['observer'];
+    this.params.target = n as PerspectiveParams['target'];
     if (this.initialized) this.rebuild();
   }
 
@@ -740,14 +759,13 @@ export class PerspectiveExhibit implements Exhibit {
    */
   private rebuild(): void {
     const p = this.params;
-    // m=1(線の住人)の HUD 表現は Phase 7/8 のストレッチ。中途半端に出さない
-    const m = clamp(Math.round(p.observer), OBSERVER_MIN, OBSERVER_MAX);
-    let n = clamp(Math.round(p.target), TARGET_MIN, TARGET_MAX);
-    if (n === m) n = m < TARGET_MAX ? m + 1 : m - 1; // m ≠ n を強制
+    // 範囲・m ≠ n・X線が成立する n の上限 ── 規則の実装は
+    // `ui/perspectiveRange.ts` の 1 本だけ。ここも UI もテストも同じものを見る
+    const { m, n, mode } = resolvePerspective(p.observer, p.target, this.requestedMode);
     p.observer = m as PerspectiveParams['observer'];
     p.target = n as PerspectiveParams['target'];
 
-    this.mode = resolveMode(m, n, this.requestedMode);
+    this.mode = mode;
     p.mode = this.mode;
 
     this.pickPlanes(n);
@@ -806,22 +824,15 @@ export class PerspectiveExhibit implements Exhibit {
   }
 
   /**
-   * 回転平面の選択(polytope explorer と同じ考え方)。
-   * スライス軸は常に最終軸 n−1 なので、**最終軸を含む平面を必ず 1 枚**入れる。
-   * さもないと対象が超平面に対して姿勢を変えず、断面が単に相似縮小するだけになる。
+   * 回転平面の選択。規則の実装は `math/tumble.ts` の `planSlicePlanes` 1 本
+   * ── 条件(最終軸を含む / どの軸も触られる)はそこに書いてあり、
+   * `tumble.test.ts` がそれを毎回検査する。ここは受け取って詰め替えるだけ。
    */
   private pickPlanes(n: number): void {
-    const r = this.rots;
-    if (n <= 3) {
-      setPlane(r[0], 0, 1);
-      setPlane(r[1], 0, 2);
-      setPlane(r[2], 1, 2);
-      return;
+    const planes = planSlicePlanes(n);
+    for (let k = 0; k < this.rots.length; k++) {
+      setPlane(this.rots[k], planes[k][0], planes[k][1]);
     }
-    setPlane(r[0], 0, 2);
-    setPlane(r[1], 1, n - 1);
-    // n=4 では (2, n−2) が退化する。(0,3) にすると 4 軸すべてが回る
-    setPlane(r[2], n - 2 > 2 ? 2 : 0, n - 2 > 2 ? n - 2 : 3);
   }
 
   private updateRots(t: number): void {
@@ -851,11 +862,14 @@ export class PerspectiveExhibit implements Exhibit {
         const r2 = x * x + y * y + z * z;
         if (r2 > maxSq) maxSq = r2;
       }
-      // 影の深度キュー用に、回転後の最終軸座標の振れ幅も同じ走査で測る
+      // 影の深度キュー用に、**彩色が実際に読む量**の振れ幅を同じ走査で測る。
+      // 読む量と測る量が別のものになると、レンジを使い切れない(m を広げた
+      // Phase 42 では、軸 n−1 だけを測って軸 m..n−1 のノルムを塗ることになる)
       if (poly !== null) {
         const n = poly.n;
+        const m = this.params.observer;
         for (let v = 0; v < poly.vertexCount; v++) {
-          const d = Math.abs(this.vertRot[v * n + n - 1]);
+          const d = Math.abs(lostDepthRaw(this.vertRot, v * n, m));
           if (d > maxDepth) maxDepth = d;
         }
       }
@@ -994,6 +1008,12 @@ export class PerspectiveExhibit implements Exhibit {
   /**
    * 影モード: n → m の透視投影。辺は細分割しない ── 投影の真の曲率は
    * polytope explorer の担当で、ここで見せたいのは「次元が落ちる」ことそのもの。
+   *
+   * **カスケードを 2 段に割らないのは正しい。** n → m と落としてから m → 3 で
+   * 画面へ載せるのは、n → 3 と一気に落とすのと厳密に同じ計算になる(同じ視点距離を
+   * 通る同じ f の列)。m=2 だけが `flattenTo2D` の一段を余分に要るのは、そこでは
+   * 落とし先が平面で、画面がその平面を正面から見せられるからだ。
+   * m がこのモードで動かすのは形ではなく**色**である(`lostDepthRaw`)。
    */
   private buildShadow(poly: Polytope, n: number): number {
     const count = poly.vertexCount;
@@ -1068,7 +1088,7 @@ export class PerspectiveExhibit implements Exhibit {
       return;
     }
 
-    // 影モード: 頂点ごとに「投影で失われた最終軸」の深さで彩色する
+    // 影モード: 頂点ごとに「観測者がまず届かない軸 m」の深さで彩色する
     const poly = this.polytope;
     const lum = this.lineBrightness;
     if (poly === null || this.params.family === 'sphere') {
@@ -1083,6 +1103,7 @@ export class PerspectiveExhibit implements Exhibit {
     }
 
     const n = poly.n;
+    const m = this.params.observer;
     const rot = this.vertRot;
     const edges = poly.edges;
     const near = this.scratchColor;
@@ -1092,8 +1113,8 @@ export class PerspectiveExhibit implements Exhibit {
       const a = edges[e * 2];
       const b = edges[e * 2 + 1];
       const o = e * 6;
-      depthColor(rot[a * n + n - 1] * ds, near);
-      depthColor(rot[b * n + n - 1] * ds, far);
+      depthColor(lostDepthRaw(rot, a * n, m) * ds, near);
+      depthColor(lostDepthRaw(rot, b * n, m) * ds, far);
       col[o] = near.r * lum;
       col[o + 1] = near.g * lum;
       col[o + 2] = near.b * lum;
@@ -1754,6 +1775,35 @@ function flattenTo2D(proj: Float32Array, count: number, dist: number): void {
     proj[o + 1] *= f;
     proj[o + 2] = 0;
   }
+}
+
+/**
+ * 影モードの深度キューの生値 ── **観測者がまず届かない方向**(Phase 42)。
+ *
+ * まず、動かないものを先に言う。**影の形は m に依らない。** 透視カスケードは
+ * 合成するので、n → m と落としてから m → 3 で画面へ載せた結果は、n → 3 と
+ * 一気に落とした結果と**厳密に等しい**(同じ視点距離を通る以上、同じ f の列を
+ * 同じ順に掛けているだけだから ── `projectPerspective` のループを 2 つに割った
+ * ものそのものである)。「m を上げたら影の形が変わる」ことは原理的に起きない。
+ * これは実装の手抜きではなく透視投影の性質で、m=2 だけが例外なのは、そこでは
+ * 落とし先が**平面**であって、画面がその平面を正面から見せられるからだ。
+ *
+ * では m は何を変えるのか。**色**である。軸 m は「観測者の世界のすぐ外側」──
+ * その住人が持てない最初の方向で、m を動かすと色を駆動する軸そのものが移る。
+ * それまでは軸 n−1 に決め打たれていたので、**m=3 と m=4 の影は完全に同一の絵**
+ * だった(罠 #22 の、影の側に残っていた同型)。
+ *
+ * **失われた軸すべてのノルムにはしない。** 一度そう書いて実物を見た ──
+ * m=3 / n=6 の影が一様なピンクに潰れた(色 t の標準偏差 0.354 → 0.176、
+ * 最小値 0.414 で下半分を一度も使わない)。χ 分布は軸の数が増えるほど中央へ
+ * 寄るので、「どれだけ失われたか」は言えても**手前と奥が読めなくなる**。
+ * この作品の優先順位は 数学的正しさ → **図の可読性** → 芸術性 であって、
+ * 表現力のために可読性を差し出す順ではない。
+ * 符号つきの 1 軸なら、どの m でも近/遠が残り、余次元 1(m = n−1)では
+ * 軸 m = 軸 n−1 なので **既存の絵と厳密に一致する**(テッセラクトの影は不変)。
+ */
+function lostDepthRaw(rot: Float64Array, offset: number, m: number): number {
+  return rot[offset + m];
 }
 
 /** 影モードの深度キュー: 手前(+)ほどマゼンタ、奥(−)ほど青 */

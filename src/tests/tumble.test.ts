@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_TUMBLE_PLANES, planTumble } from '../math/tumble';
+import { MAX_TUMBLE_PLANES, planSlicePlanes, planTumble } from '../math/tumble';
 import { rotateBatch, type PlaneRotation } from '../math/rotation';
 import { projectOrtho } from '../math/projection';
 import { makePolytope, type PolytopeFamily } from '../math/polytopes';
@@ -193,5 +193,63 @@ describe('直交投影の非退化(Phase 37 の回帰)', () => {
       const distinct = orthoImage('cube', n, 1.2345).split(';').length;
       expect(distinct, `n=${n}`).toBe(poly.vertexCount);
     }
+  });
+});
+
+/* ------------------------------------------------- PERSPECTIVE の回転平面(Phase 42) */
+
+describe('planSlicePlanes', () => {
+  const TARGET_MIN = 2;
+  const TARGET_MAX = 6;
+
+  it('常に 3 枚で、軸は範囲内・i ≠ j', () => {
+    /*
+      範囲内であることが要。`rotateBatch` はストライド n の配列へ `dst[v·n + j]`
+      と書くので、j ≥ n の平面は**隣の頂点の座標を潰す**。旧実装は n=2 でも
+      (0,2) / (1,2) を張っていた(X線俯瞰しか n=2 を取らないので露出していなかった)。
+    */
+    for (let n = TARGET_MIN; n <= TARGET_MAX; n++) {
+      const planes = planSlicePlanes(n);
+      expect(planes.length, `n=${n}`).toBe(3);
+      for (const [i, j] of planes) {
+        expect(i, `n=${n} の平面 (${i},${j})`).toBeGreaterThanOrEqual(0);
+        expect(j, `n=${n} の平面 (${i},${j}) が範囲外の軸へ書く`).toBeLessThan(n);
+        expect(i, `n=${n} の平面 (${i},${j})`).not.toBe(j);
+      }
+    }
+  });
+
+  it('条件⑤ スライス軸 n−1 を含む平面が必ず 1 枚ある', () => {
+    // 無いと対象が超平面に対して姿勢を変えず、断面は相似縮小して消えるだけになる
+    for (let n = 4; n <= TARGET_MAX; n++) {
+      const planes = planSlicePlanes(n);
+      const touchesLast = planes.some(([i, j]) => i === n - 1 || j === n - 1);
+      expect(touchesLast, `n=${n} が最終軸を回していない`).toBe(true);
+    }
+  });
+
+  it('条件⑥ どの軸も少なくとも 1 枚の平面に触られる', () => {
+    /*
+      触られない軸は時間で動かない座標になる ── 影の深度キューがその軸を
+      駆動する m のとき色が凍り、断面ではその軸の固定オフセットが一度も
+      別の場所を通らない。旧実装は n=6 で軸 3 を落としていた(罠 #20 の、
+      透視でも残る半分)。
+    */
+    for (let n = TARGET_MIN; n <= TARGET_MAX; n++) {
+      const touched = new Set<number>();
+      for (const [i, j] of planSlicePlanes(n)) {
+        touched.add(i);
+        touched.add(j);
+      }
+      for (let axis = 0; axis < n; axis++) {
+        expect(touched.has(axis), `n=${n} の軸 ${axis} がどの平面にも入っていない`).toBe(true);
+      }
+    }
+  });
+
+  it('n=4 / n=5 は Phase 42 以前と同一(絵が変わるのは n=6 だけ)', () => {
+    expect(planSlicePlanes(4)).toEqual([[0, 2], [1, 3], [0, 3]]);
+    expect(planSlicePlanes(5)).toEqual([[0, 2], [1, 4], [2, 3]]);
+    expect(planSlicePlanes(6)).toEqual([[0, 2], [1, 5], [3, 4]]);
   });
 });
