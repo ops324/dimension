@@ -29,10 +29,30 @@ import { EXHIBIT_REGISTRY, type ExhibitId } from './gallery';
 
 export type Route =
   | { readonly mode: 'narrative'; readonly scrollY: number | null }
-  | { readonly mode: 'gallery'; readonly exhibit: ExhibitId };
+  | {
+      readonly mode: 'gallery';
+      readonly exhibit: ExhibitId;
+      /**
+       * 展示のパラメータ(Phase 44)。**この層は中身を一切知らない。**
+       * 符号化の規則は `core/exhibitState.ts` が持ち、ここは不透明な文字列として
+       * 運ぶだけ ── そうしておくと、パラメータが増えても route.ts は変わらない。
+       */
+      readonly state: string | null;
+    };
 
 /** クエリのキー。`?exhibit=`(単独ブート)とは決して重ねない */
 const PARAM = 'gallery';
+/**
+ * 展示のパラメータの予約キー(Phase 44)。
+ *
+ * **この層が所有するキーは `gallery` と `p` の 2 本だけ**で、それが要である。
+ * 平たくキーを増やす(`&observer=3&target=4`)と、展示を切り替えるたびに
+ * 前の展示のキーが残って嘘の URL ができ、消すには「消してよいキーの一覧」を
+ * ここが持つことになる ── 上の「他のクエリを何も知らないまま保つ」の破壊であり、
+ * 同時に `isExhibitId` の注が警告している「手書きの一覧は取り残される」でもある。
+ * 1 本なら `delete(PARAM_STATE)` で完全に掃除できる。
+ */
+const PARAM_STATE = 'p';
 
 /**
  * 履歴エントリに焼く状態。
@@ -65,11 +85,20 @@ export function isExhibitId(value: string | null): value is ExhibitId {
  * 未知の id は物語へ落とす ── 壊れたリンクで白画面にしない。
  */
 export function parseRoute(href: string, state?: unknown): Route {
-  const value = new URL(href).searchParams.get(PARAM);
-  if (isExhibitId(value)) return { mode: 'gallery', exhibit: value };
+  const params = new URL(href).searchParams;
+  const value = params.get(PARAM);
+  if (isExhibitId(value)) {
+    return { mode: 'gallery', exhibit: value, state: params.get(PARAM_STATE) };
+  }
 
   const y = (state as RouteState | null | undefined)?.y;
   return { mode: 'narrative', scrollY: typeof y === 'number' ? y : null };
+}
+
+/** 予約キーを立てるか消すか。空文字は**書かない**(既定と一致する状態) */
+function applyState(url: URL, state: string | null): void {
+  if (state === null || state === '') url.searchParams.delete(PARAM_STATE);
+  else url.searchParams.set(PARAM_STATE, state);
 }
 
 export class Router {
@@ -96,29 +125,52 @@ export class Router {
    * リロードして戻ったとき、新しい Gallery の savedScrollY は 0 なので
    * 序章に落とされる。
    */
-  enter(exhibit: ExhibitId, fromScrollY: number): void {
+  enter(exhibit: ExhibitId, fromScrollY: number, state: string | null = null): void {
     const base = new URL(window.location.href);
     base.searchParams.delete(PARAM);
+    base.searchParams.delete(PARAM_STATE);
     const narrative: RouteState = { d: 'narrative', y: fromScrollY };
     history.replaceState(narrative, '', base);
 
     const next = new URL(window.location.href);
     next.searchParams.set(PARAM, exhibit);
+    applyState(next, state);
     const gallery: RouteState = { d: 'gallery', exhibit, owned: true };
     history.pushState(gallery, '', next);
 
-    this.onRoute({ mode: 'gallery', exhibit });
+    this.onRoute({ mode: 'gallery', exhibit, state });
   }
 
   /**
    * 展示の切り替え。**replaceState** なので 4 つのタブで履歴が汚れない
    * (戻るは常に「ギャラリーへ入る前」へ帰る)。`owned` は引き継ぐ。
    */
-  select(exhibit: ExhibitId): void {
+  select(exhibit: ExhibitId, state: string | null = null): void {
     const url = new URL(window.location.href);
     url.searchParams.set(PARAM, exhibit);
-    const state: RouteState = { d: 'gallery', exhibit, owned: this.ownsGalleryEntry };
-    history.replaceState(state, '', url);
+    // **前の展示のパラメータをここで必ず落とす。** 展示ごとに短い名前は
+    // 重なる(polytope の `n` と perspective の `n` は別のもの)ので、
+    // 残せば次の展示が他人のパラメータを読むことになる
+    applyState(url, state);
+    const entry: RouteState = { d: 'gallery', exhibit, owned: this.ownsGalleryEntry };
+    history.replaceState(entry, '', url);
+  }
+
+  /**
+   * 表示中の展示のパラメータだけを URL へ焼き直す(Phase 44)。
+   *
+   * **必ず `replaceState`。** `pushState` にすると、スライダー 1 往復で履歴が
+   * 100 エントリ伸びて「戻る」が機能しなくなる。`owned` と展示 id は
+   * `history.state` から引き継ぐので、往復しても `leave()` の判定がずれない。
+   * popstate は起きないので `applyRoute` へ戻る経路が無く、
+   * 「モードの出入りは Router を通る 1 本だけ」という不変条件も保たれる。
+   */
+  setState(state: string | null): void {
+    const current = history.state as RouteState | null;
+    if (current?.d !== 'gallery') return;
+    const url = new URL(window.location.href);
+    applyState(url, state);
+    history.replaceState(current, '', url);
   }
 
   /**
@@ -135,6 +187,7 @@ export class Router {
     }
     const url = new URL(window.location.href);
     url.searchParams.delete(PARAM);
+    url.searchParams.delete(PARAM_STATE);
     const state: RouteState = { d: 'narrative' };
     history.replaceState(state, '', url);
     this.onRoute({ mode: 'narrative', scrollY: null });
