@@ -529,9 +529,18 @@ export class Gallery {
    * 展示の切り替え。
    * exit() で reveal を 0 へ落とし、~380ms 待ってからシーンを差し替える
    * (差し替えを待つ間も前の展示が update され続けるのでフェードが見える)。
+   *
+   * **`busy` も見る**(Phase 44b)。退場の幕は 560ms 降りていて、`this.mode` が
+   * `'narrative'` になるのは**その終わり**である ── つまり幕の裏では
+   * `mode === 'gallery'` のままここを通れてしまう。ポインタは
+   * `.tx[data-active] { pointer-events: auto }` が吸うが、**キーボードは吸われない**:
+   * タブに焦点がある状態で Esc → 幕 → その最中に Enter、で `router.select()` が
+   * **物語のエントリへ** `?gallery=<id>` を焼く。絵は幕明けの exitGallery が
+   * 上書きして戻るのに、URL と `history.state` だけがギャラリーを指したまま残る。
    */
   select(id: ExhibitId): void {
-    if (this.mode !== 'gallery' || id === this.activeId || this.switchTimer !== 0) return;
+    if (this.mode !== 'gallery' || this.busy) return;
+    if (id === this.activeId || this.switchTimer !== 0) return;
     const next = this.exhibits.get(id);
     if (next === undefined) return;
 
