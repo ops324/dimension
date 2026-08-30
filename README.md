@@ -56,8 +56,13 @@
 開くと、その展示から直接はじまる。タブを切り替えても履歴は増えないので、戻るは
 いつでも「ギャラリーへ入る前」のスクロール位置へ帰る。
 
+**パラメータも載る。**右パネルを触ると `&p=` が付き、**その設定のまま**送れる。
+受け取った人がさらに動かせば URL もそのまま追いつくので、**見つけた絵はどこからでも
+次の人へ渡せる**。既定と一致する値は書かないので、何も触らなければ URL は増えない。
+
 ```
 https://dimension-vert.vercel.app/?gallery=clifford
+https://dimension-vert.vercel.app/?gallery=hopf&p=fib-1200_dist-fibonacci_w1-0.4
 ```
 
 ### 描画品質
@@ -97,7 +102,7 @@ https://dimension-vert.vercel.app/?gallery=clifford
 - 体感を決める式(ゲート・前線・ドリーズームの保存量・昇華)は `src/scenes/narrativeMath.ts` に純関数として切り出し、vitest で縛っている
 - ULTRA品質のエスカレーション起動 + フレーム時間ベースのAUTO降格
 - 音響は WebAudio による完全プロシージャル合成
-- 状態は URL に載り、履歴が退場路になる(`?gallery=<id>`)
+- 状態は URL に載り、履歴が退場路になる(`?gallery=<id>&p=<名前付きペア>`)
 - `env(safe-area-inset-*)` / ライブリージョン / 焦点の閉じ込め
 
 **設計の詳細・定数の根拠・既知の罠は [SPEC.md](SPEC.md) を参照。**
@@ -107,7 +112,7 @@ https://dimension-vert.vercel.app/?gallery=clifford
 ```bash
 npm install
 npm run dev      # 開発サーバー
-npx vitest run   # 数学コア + 体感を決める純関数のテスト(263件)
+npx vitest run   # 数学コア + 体感を決める純関数 + URL 層のテスト(325件)
 npm run build    # 静的ビルド → dist/
 npm run preview  # 本番ビルドの確認(:4173)
 ```
