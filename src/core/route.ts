@@ -160,17 +160,33 @@ export class Router {
    * 表示中の展示のパラメータだけを URL へ焼き直す(Phase 44)。
    *
    * **必ず `replaceState`。** `pushState` にすると、スライダー 1 往復で履歴が
-   * 100 エントリ伸びて「戻る」が機能しなくなる。`owned` と展示 id は
-   * `history.state` から引き継ぐので、往復しても `leave()` の判定がずれない。
-   * popstate は起きないので `applyRoute` へ戻る経路が無く、
-   * 「モードの出入りは Router を通る 1 本だけ」という不変条件も保たれる。
+   * 100 エントリ伸びて「戻る」が機能しなくなる。popstate は起きないので
+   * `applyRoute` へ戻る経路が無く、「モードの出入りは Router を通る 1 本だけ」
+   * という不変条件も保たれる。
+   *
+   * **関門は URL である**(Phase 44b)。以前はここが `history.state` を見て
+   * `current?.d !== 'gallery'` で弾いていたが、`?gallery=<id>` を**直接開いた回**の
+   * エントリはブラウザが作ったもので `history.state === null` ── Router はまだ
+   * 一度も書いていない。つまり**共有リンクを受け取った人の書き込みだけが
+   * 丸ごと落ちていた**。Phase 44 が直そうとした当の経路である。
+   * しかも `p` を持つリンクなら URL は送り手の値のまま残るので、受け取った人が
+   * 設定を変えて転送すると**誰も見ていない絵**が届く ── 共有を直すための機能が
+   * 共有を壊す。`onPopState` が既に宣言している「状態の真実は常に URL 側から
+   * 読む」を、ここにも適用する。
+   *
+   * 素のエントリへ焼くときも **`owned` は付けない**。付ければ `leave()` が
+   * `history.back()` を呼び、深リンクで来た人がサイトごと離脱する
+   * (Phase 13 が直したバグそのもの)。
    */
   setState(state: string | null): void {
-    const current = history.state as RouteState | null;
-    if (current?.d !== 'gallery') return;
     const url = new URL(window.location.href);
+    const exhibit = url.searchParams.get(PARAM);
+    if (!isExhibitId(exhibit)) return;
     applyState(url, state);
-    history.replaceState(current, '', url);
+    // 既にギャラリーエントリなら `owned` ごと引き継ぎ、素のエントリなら立てるだけ
+    const current = history.state as RouteState | null;
+    const entry: RouteState = current?.d === 'gallery' ? current : { d: 'gallery', exhibit };
+    history.replaceState(entry, '', url);
   }
 
   /**
