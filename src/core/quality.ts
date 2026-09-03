@@ -434,6 +434,16 @@ export class QualityController {
   private setOpen(open: boolean): void {
     this.rootEl.dataset.open = open ? 'true' : 'false';
     this.chipEl.setAttribute('aria-expanded', open ? 'true' : 'false');
+    /*
+      **開閉を body へも出す**(Phase 45b)。`drawer-open` と同じ作法で、
+      理由も同じ ── 開いたメニューは**柱 1 段の外へ育つ**(実測: 安静 65px /
+      展開 111px)ので、その真上に立っている要素は席を譲る必要がある。
+      CSS からは `#quality` の兄弟しか引けないため、状態は body で配る。
+
+      いま譲るのは狭い画面の PERSPECTIVE のキャプションだけ(style.css)。
+      広い画面では柱が左、キャプションが中央右なので端から重ならない。
+    */
+    document.body.classList.toggle('quality-open', open);
     if (open) {
       this.refreshReadout();
       // display が付いた直後 = ここではじめて選択肢の幅が測れる

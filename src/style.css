@@ -3817,7 +3817,15 @@ html {
     立っている計器のピル(下から 展示カウンタ / 音 / 品質 の最大 3 段)が
     文字の上に重なる ── どちらも「読めない」ことに変わりはない。
     そこで柱 3 段ぶんを跨いだ高さに置き、幅も画面いっぱいまで開いて行数を減らす。
-    既定(畳んだシート)ではどのピルとも重ならない。
+
+    **この算術が守れるのは「柱の各段がピル 1 個」のときだけである**(Phase 45b)。
+    品質チップだけは器の中に読み(.q-readout)と選択肢(.q-opts)を抱えていて、
+    **1 段(--hud-stack = 42px)より高く育つ** ── 実測で 安静 65px / 展開 111px。
+    展開時は柱が下辺から 260px まで伸び、キャプションの 203px を追い越すので、
+    **静的な段数では原理的に避けられない**(避けるには文字を画面の中ほどへ
+    上げることになり、それは作品の上に居座る)。だから席を譲る側で解く ── 下の
+    `.quality-open` の規則。安静時に 11px 分ぶつかっているのは
+    `visibility: hidden` の読みの箱だけで、画面には何も出ていない。
   */
   body.mode-gallery #perspective-caption {
     /* left:50% + translateX の縮小幅は「left から右端まで」で頭打ちになる
@@ -3831,6 +3839,40 @@ html {
       bottom var(--t-med) var(--ease-out-quint),
       opacity var(--t-immersive) var(--ease-out-quint),
       visibility var(--t-immersive);
+  }
+
+  /*
+    品質メニューを開いているあいだ、キャプションは席を譲る(Phase 45b)。
+
+    `drawer-open` が音・品質・言語のチップを引っ込めるのと**同じ判断**である
+    ── 開いたメニューは意図した一手で、そのあいだ passive に読む一行が
+    覆われているより、静かに引いて閉じた瞬間に戻るほうが読める。
+    尺はキャプションが元から持っている --t-immersive のフェードをそのまま使う。
+
+    **広い画面には当てない。** あちらは柱が左下、キャプションが中央右なので
+    端から重ならない(実測: caption 492–788 / quality 24–171)。
+  */
+  body.mode-gallery.quality-open #perspective-caption {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  /*
+    狭い画面では実効解像度の読みを**展開時だけ**出す(ホバーでは出さない)。
+
+    ここはタッチのレイアウトで、`hover` は本物の入力ではない ── けれど
+    幅で入るメディアクエリなので、狭くしたデスクトップでは擬似的に発火して、
+    読みがキャプションの最終行の上に 11px だけ現れていた(実測)。
+    展開すれば読みは出るので、失う情報は無い。
+  */
+  #quality:hover .q-readout {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  #quality[data-open='true'] .q-readout {
+    opacity: 1;
+    visibility: visible;
   }
 }
 
