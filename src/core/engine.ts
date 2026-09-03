@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { UI } from '../i18n';
 import { buildPostFX, type PostFX } from '../render/postfx';
 
 /**
@@ -411,12 +412,12 @@ export class Engine {
     ].join(';');
 
     const message = document.createElement('p');
-    message.textContent = 'グラフィックスの初期化に失敗しました。ページを再読み込みしてください。';
+    message.textContent = UI.engine.error;
     message.style.cssText = 'margin:0;max-width:34rem;line-height:2';
 
     const button = document.createElement('button');
     button.type = 'button';
-    button.textContent = '再読み込み';
+    button.textContent = UI.engine.reload;
     button.style.cssText = [
       'padding:0.7rem 2rem',
       'border:1px solid var(--cyan,#4fd8ff)',

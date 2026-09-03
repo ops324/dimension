@@ -21,6 +21,7 @@
  * それを伝えるためだけの一行で、6 秒で自分から消える。トグルは増やさない。
  */
 
+import { UI } from '../../i18n';
 import { audio, type SoundDetail } from '../../audio/engine';
 import { toggleOff, toggleOn } from '../../audio/sfx';
 import { DUR, EASE, h, play, prefersReducedMotion, type Component } from './component';
@@ -47,7 +48,6 @@ const PULSE_DELAY_MS = 900;
  * それがどう作用するかは書かないし、この作品は何も約束しない。
  */
 const HINT_KEY = 'dimension.sound.hint';
-const HINT_TEXT = 'ヘッドフォンを ── うなりは空気ではなく、耳の中で生まれる。';
 /** 出したまま置く時間(ms)。読み切って、まだ少し残る長さ */
 const HINT_HOLD_MS = 6000;
 /** 引きの尺(ms)。急がずに消える */
@@ -99,7 +99,7 @@ export class SoundToggle implements Component {
       'data-cursor': '',
       // 混在した文字列に lang は付けられない ── 言い換えでしか直らない。
       // 可視ラベルの「SOUND」は装飾なので、名前は日本語だけで足りる
-      'aria-label': '環境音',
+      'aria-label': UI.sound.label,
       'aria-pressed': 'false',
     });
 
@@ -190,7 +190,7 @@ export class SoundToggle implements Component {
     this.hint = hint;
     this.el.append(hint);
     requestAnimationFrame(() => {
-      hint.textContent = HINT_TEXT;
+      hint.textContent = UI.sound.hint;
     });
 
     play(hint, [{ opacity: 0 }, { opacity: 1 }], {

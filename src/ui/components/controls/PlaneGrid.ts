@@ -39,6 +39,7 @@
  * タッチスクリーン付きのデスクトップは `(hover: hover)` を返すので升目が出る。
  */
 
+import { UI } from '../../../i18n';
 import { h, type Component } from '../component';
 
 export interface PlaneGridCell {
@@ -117,7 +118,7 @@ export function createPlaneGrid(spec: PlaneGridSpec): PlaneGridControl {
               type: 'button',
               'aria-pressed': 'false',
               // 読み上げは「平面 0-3」。升目そのものに可視の文字は置かない
-              'aria-label': `平面 ${i}-${j}`,
+              'aria-label': UI.planeCell(i, j),
               'data-cursor': '',
             }) as HTMLButtonElement);
       if (cell instanceof HTMLButtonElement) buttons.set(cellKey(i, j), cell);

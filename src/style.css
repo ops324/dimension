@@ -365,6 +365,26 @@ body.fonts-ready #narrative {
   text-shadow: 0 0 18px rgba(5, 6, 15, 0.9);
 }
 
+/*
+  欧文の縦組み(Phase 45)。
+
+  `vertical-rl` の既定は `text-orientation: mixed` で、和文は正立・欧文は
+  横倒しになる ── 和文にはこれが正しいが、`PROLOGUE` を横倒しの 8 文字として
+  積むと、字と字のあいだに letter-spacing 0.45em が縦に入って**読めない柱**に
+  なる。欧文は 1 文字ずつ回すのではなく、**行ごと 90° 倒す**のが製図の作法で、
+  それが `text-orientation: sideways` である(和文のときは指定しない ──
+  漢字まで倒れる)。
+
+  行が倒れるので、字送りは縦ではなく横へ効くようになる。0.45em はその向きだと
+  広すぎるので、欧文だけ 0.22em へ詰める。
+*/
+:root[data-lang='en'] .ch-caption {
+  /* Safari は接頭辞側だけを見る(背景クリップ・backdrop-filter と同じ扱い) */
+  -webkit-text-orientation: sideways;
+  text-orientation: sideways;
+  letter-spacing: 0.22em;
+}
+
 .chapter[data-align='right'] .ch-caption {
   right: auto;
   left: clamp(0.9rem, 2.6vw, 2.6rem);
@@ -2458,6 +2478,32 @@ body.drawer-open #quality {
   color: #eafbff;
 }
 
+/* --------------------------------------------------- 二段組みの空いた側
+
+   この作品の意匠は「読者の言語 + 欧文の飾り」の二段組みで出来ている
+   (ナビの `物語 / STORY`、ドロワーの `ANALOGY / たとえるなら`)。
+   **英語では二段が同じ語になる**ので、辞書が片方を空文字にする
+   (`i18n/en.ts` の UI の注)。空になった側をここで畳む。
+
+   `:empty` で引くのが要点で、`:lang(en)` では引かない ── どちらの側が
+   空になるかは場所ごとに違う(ナビは欧文が、ドロワーは訳文が空になる)。
+   条件を「空であること」に置けば、辞書が唯一の情報源のままになる。
+
+   親はどれも flex で gap を持つが、`display: none` の子は gap を作らない
+   ので、間隔の調整は要らない。
+*/
+
+.nav-en:empty,
+.nav-jp:empty,
+.gh-about-en:empty,
+.gh-about-jp:empty,
+.dw-label-en:empty,
+.dw-label-jp:empty,
+.dw-deep-en:empty,
+.dw-deep-jp:empty {
+  display: none;
+}
+
 /* ------------------------------------------------------------ 音のチップ
 
    品質チップと**同じ寸法・同じヘアライン・同じ書体**で、その真下に座る。
@@ -2483,6 +2529,19 @@ body.drawer-open #quality {
 /* 音チップが在るときだけ品質チップが 1 段上がる(単独展示ブートでは動かない) */
 body.has-sound #quality {
   bottom: calc(var(--hud-inset-b) + var(--hud-stack));
+}
+
+/*
+  言語スイッチが在ると、物語の右下の柱は下から
+  [言語][音][品質] の 3 段になる(Phase 45)。段の側ではなく**底**へ足す ──
+  :root の注のとおり、段へ足すと段数ぶん二重に数える。
+*/
+body.has-lang #sound {
+  bottom: calc(var(--hud-inset-b) + var(--hud-stack));
+}
+
+body.has-lang.has-sound #quality {
+  bottom: calc(var(--hud-inset-b) + var(--hud-stack) * 2);
 }
 
 body.mode-gallery #sound {
@@ -2679,6 +2738,102 @@ body.mode-gallery .s-hint {
    pointer-events の 3 点で「そこに在るが、見えず、触れない」を作る。
 */
 
+/* ---------------------------------------------------------- 言語スイッチ
+
+   音のチップ・没入チップと**同じ寸法・同じヘアライン・同じ書体**の 1 個の
+   チップ。可視ラベルは行き先の言語名(理由は LangToggle.ts のモジュール注)。
+
+   席は 3 か所に分かれる ── どれも「既にチップが座っている席の隣」で、
+   新しい席を作らない:
+
+   物語               … 右下の柱のいちばん下。音と品質はそれぞれ 1 段上がる
+   ギャラリー(広い) … 右下は操作卓のドックが占めているので、没入チップと
+                        同じだけ左へ逃がしてその 1 段上
+   ギャラリー(シート)… 操作卓がシートに化けて右が空くので、そのまま右の柱
+                        の 2 段目。底はシートの実測高さから積む
+
+   幅の要る位置(左の計器の柱・キャプションの上)を避けているのは実測の結果で、
+   **チップ 1 個(~76px)だからどの席にも収まる** ── 2 段のピル(130px)は
+   PERSPECTIVE のキャプションと、開いた品質メニューの両方に重なった。
+*/
+
+#lang {
+  position: fixed;
+  right: var(--hud-inset-r);
+  bottom: var(--hud-inset-b);
+  z-index: 5;
+  font-family: var(--font-mono);
+  transition:
+    opacity var(--t-fast) linear,
+    visibility var(--t-fast),
+    bottom var(--t-med) var(--ease-out-quint);
+}
+
+/* ギャラリー(広い画面)── 没入チップの真上。ドックの左隣へ逃がす */
+body.mode-gallery #lang {
+  right: calc(var(--gal-gutter-r) + var(--gal-panel-w) + var(--s3));
+  bottom: calc(var(--hud-inset-b) + var(--hud-stack));
+}
+
+/* 解説を開いているあいだは引っ込む(品質・音のチップと同じ判断) */
+body.drawer-open #lang {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.l-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  height: var(--pill-h);
+  padding: 0 var(--s3);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--surface);
+  -webkit-backdrop-filter: blur(14px) saturate(140%);
+  backdrop-filter: blur(14px) saturate(140%);
+  color: var(--ink-dim);
+  font-family: inherit;
+  font-size: 0.56rem;
+  letter-spacing: 0.18em;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    color var(--t-fast) linear,
+    border-color var(--t-fast) linear;
+}
+
+.l-chip:hover,
+.l-chip:focus-visible {
+  color: var(--ink);
+  border-color: rgba(79, 216, 255, 0.4);
+}
+
+.l-chip-glyph {
+  font-size: 0.72rem;
+  line-height: 1;
+  color: var(--ink-dim);
+  transition: color var(--t-fast) linear;
+}
+
+.l-chip:hover .l-chip-glyph,
+.l-chip:focus-visible .l-chip-glyph {
+  color: var(--cyan);
+  text-shadow: 0 0 10px rgba(79, 216, 255, 0.5);
+}
+
+/*
+  行き先の言語名は**その言語の書体で組む** ── 和文をモノスペースの欧文
+  フォントに任せると字がフォールバックで拾われて字面が揃わない。
+  字送り 0.18em も和文には広すぎるので詰める。
+*/
+.l-chip-label:lang(ja) {
+  font-family: var(--font-body);
+  font-size: 0.62rem;
+  letter-spacing: 0.08em;
+}
+
 #immersive {
   position: fixed;
   right: var(--hud-inset-r);
@@ -2772,6 +2927,7 @@ body.ui-hidden .i-chip:focus-visible {
 #perspective-inset,
 body.mode-gallery #quality,
 body.mode-gallery #sound,
+body.mode-gallery #lang,
 body.mode-gallery #perspective-caption {
   transition:
     opacity var(--t-immersive) var(--ease-out-quint),
@@ -2786,6 +2942,7 @@ body.ui-hidden #mode-nav,
 body.ui-hidden #hud,
 body.ui-hidden #quality,
 body.ui-hidden #sound,
+body.ui-hidden #lang,
 body.ui-hidden #perspective-caption,
 body.ui-hidden #perspective-inset {
   opacity: 0;
@@ -3579,6 +3736,7 @@ html {
   body.mode-gallery .hud-ex,
   body.mode-gallery #quality,
   body.mode-gallery #sound,
+  body.mode-gallery #lang,
   body.mode-gallery #immersive {
     transition:
       bottom var(--t-med) var(--ease-out-quint),
@@ -3605,10 +3763,26 @@ html {
     bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack) * 2);
   }
 
-  /* 没入チップは右側の柱に単独で立つ(左は計器の柱) */
+  /* 没入チップは右側の柱の底(左は計器の柱) */
   body.mode-gallery #immersive {
     right: var(--hud-inset-r);
     bottom: calc(var(--sheet-h, 3.5rem) + var(--s2));
+  }
+
+  /*
+    シート版では**`right` を戻す** ── 操作卓がシートに化けて右側が空くので、
+    デスクトップ用に左へ逃がした分は要らない(戻さないと画面の中ほどに浮く)。
+    席は没入チップの 1 段上で、底はボトムシートの実測高さ(--sheet-h)から
+    積む ── シートの開閉に遅れず付いていく。
+
+    左の計器の柱へは合流しない。あちらは既に 3 段
+    ([シート][展示カウンタ][音][品質])で、4 段目を積むと計器が画面の
+    半ばまで伸びて作品の上に居座る(Phase 11 が定数 46svh を --sheet-h へ
+    張り替えたときに直したのと同じ失敗)。
+  */
+  body.mode-gallery #lang {
+    right: var(--hud-inset-r);
+    bottom: calc(var(--sheet-h, 3.5rem) + var(--s2) + var(--hud-stack));
   }
 
   .q-opt {
@@ -3643,7 +3817,15 @@ html {
     立っている計器のピル(下から 展示カウンタ / 音 / 品質 の最大 3 段)が
     文字の上に重なる ── どちらも「読めない」ことに変わりはない。
     そこで柱 3 段ぶんを跨いだ高さに置き、幅も画面いっぱいまで開いて行数を減らす。
-    既定(畳んだシート)ではどのピルとも重ならない。
+
+    **この算術が守れるのは「柱の各段がピル 1 個」のときだけである**(Phase 45b)。
+    品質チップだけは器の中に読み(.q-readout)と選択肢(.q-opts)を抱えていて、
+    **1 段(--hud-stack = 42px)より高く育つ** ── 実測で 安静 65px / 展開 111px。
+    展開時は柱が下辺から 260px まで伸び、キャプションの 203px を追い越すので、
+    **静的な段数では原理的に避けられない**(避けるには文字を画面の中ほどへ
+    上げることになり、それは作品の上に居座る)。だから席を譲る側で解く ── 下の
+    `.quality-open` の規則。安静時に 11px 分ぶつかっているのは
+    `visibility: hidden` の読みの箱だけで、画面には何も出ていない。
   */
   body.mode-gallery #perspective-caption {
     /* left:50% + translateX の縮小幅は「left から右端まで」で頭打ちになる
@@ -3657,6 +3839,40 @@ html {
       bottom var(--t-med) var(--ease-out-quint),
       opacity var(--t-immersive) var(--ease-out-quint),
       visibility var(--t-immersive);
+  }
+
+  /*
+    品質メニューを開いているあいだ、キャプションは席を譲る(Phase 45b)。
+
+    `drawer-open` が音・品質・言語のチップを引っ込めるのと**同じ判断**である
+    ── 開いたメニューは意図した一手で、そのあいだ passive に読む一行が
+    覆われているより、静かに引いて閉じた瞬間に戻るほうが読める。
+    尺はキャプションが元から持っている --t-immersive のフェードをそのまま使う。
+
+    **広い画面には当てない。** あちらは柱が左下、キャプションが中央右なので
+    端から重ならない(実測: caption 492–788 / quality 24–171)。
+  */
+  body.mode-gallery.quality-open #perspective-caption {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  /*
+    狭い画面では実効解像度の読みを**展開時だけ**出す(ホバーでは出さない)。
+
+    ここはタッチのレイアウトで、`hover` は本物の入力ではない ── けれど
+    幅で入るメディアクエリなので、狭くしたデスクトップでは擬似的に発火して、
+    読みがキャプションの最終行の上に 11px だけ現れていた(実測)。
+    展開すれば読みは出るので、失う情報は無い。
+  */
+  #quality:hover .q-readout {
+    opacity: 0;
+    visibility: hidden;
+  }
+
+  #quality[data-open='true'] .q-readout {
+    opacity: 1;
+    visibility: visible;
   }
 }
 
@@ -3872,6 +4088,8 @@ html {
   .gal-tab-of,
   .gal-tab-ind,
   .nav-pill,
+  .l-chip,
+  .l-chip-glyph,
   .pn-seg-btn,
   .pn-seg-pill,
   .pn-bubble,

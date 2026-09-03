@@ -18,6 +18,7 @@ import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
 import { CYAN, cosinePalette } from '../render/palette';
 import { createPanel, type PlaneGridCell } from '../ui/panel';
+import { UI } from '../i18n';
 import { polytopeTagline } from '../ui/content';
 
 import type { EngineCtx, Exhibit } from './exhibit';
@@ -193,10 +194,10 @@ interface SpinPreset {
 }
 
 const SPIN_PRESETS: readonly SpinPreset[] = [
-  { key: 'spin-default', label: '既定に戻す', kind: 'default' },
-  { key: 'spin-depth', label: '深度を重く', kind: 'depth' },
-  { key: 'spin-pose', label: '3D の姿勢を重く', kind: 'pose' },
-  { key: 'spin-all', label: '全部まわす', kind: 'all' },
+  { key: 'spin-default', label: UI.panels.polytope.spin.default, kind: 'default' },
+  { key: 'spin-depth', label: UI.panels.polytope.spin.depth, kind: 'depth' },
+  { key: 'spin-pose', label: UI.panels.polytope.spin.pose, kind: 'pose' },
+  { key: 'spin-all', label: UI.panels.polytope.spin.all, kind: 'all' },
 ];
 
 /** 深度(正規化済み ∈[-1,1])→ LUT の行インデックス */
@@ -364,6 +365,7 @@ export class PolytopeExhibit implements Exhibit {
    */
   buildPanel(root: HTMLElement): void {
     const p = this.params;
+    const L = UI.panels.polytope;
     const panel = createPanel(root, 'POLYTOPE EXPLORER');
 
     const counts = panel.readout({ label: 'VERTICES / EDGES' });
@@ -378,11 +380,7 @@ export class PolytopeExhibit implements Exhibit {
       if (poly !== null) counts(`${poly.vertexCount} / ${poly.edgeCount}`);
       const summary = this.spinSummary();
       // 上限で載らなかった枚数は黙らない。静かな切り捨ては「全部やった」に見える
-      planes(
-        summary.dropped > 0
-          ? `${summary.spinning} / ${summary.total}(上限で ${summary.dropped} 枚 保留)`
-          : `${summary.spinning} / ${summary.total}`,
-      );
+      planes(L.spinSummary(summary.spinning, summary.total, summary.dropped));
       panel.setValue('n', this.params.n);
       panel.paintPlaneGrid('planes', this.params.n, this.planeCells());
       for (const item of SPIN_PRESETS) {
@@ -392,11 +390,11 @@ export class PolytopeExhibit implements Exhibit {
 
     panel.segmented({
       key: 'family',
-      label: 'FAMILY / 族',
+      label: L.family,
       options: [
-        ['cube', '超立方体'],
-        ['simplex', '単体'],
-        ['orthoplex', '正軸体'],
+        ['cube', L.families.cube],
+        ['simplex', L.families.simplex],
+        ['orthoplex', L.families.orthoplex],
       ],
       value: p.family,
       onSelect: (v) => {
@@ -407,7 +405,7 @@ export class PolytopeExhibit implements Exhibit {
 
     panel.slider({
       key: 'n',
-      label: 'N / 次元',
+      label: L.n,
       min: N_MIN,
       max: N_MAX,
       step: 1,
@@ -420,10 +418,10 @@ export class PolytopeExhibit implements Exhibit {
 
     panel.segmented({
       key: 'projection',
-      label: 'PROJECTION / 投影',
+      label: L.projection,
       options: [
-        ['perspective', '透視'],
-        ['ortho', '直交'],
+        ['perspective', L.projections.perspective],
+        ['ortho', L.projections.ortho],
       ],
       value: p.projection,
       onSelect: (v) => {
@@ -432,10 +430,7 @@ export class PolytopeExhibit implements Exhibit {
       },
     });
 
-    panel.note(
-      '辺が曲がって見えるのは誤差ではない ── 高次元のまっすぐな辺は、' +
-        '影になるとき本当に曲がる。色は、見えなくなった軸の深さ。',
-    );
+    panel.note(L.noteProjection);
 
     panel.divider();
 
@@ -447,7 +442,7 @@ export class PolytopeExhibit implements Exhibit {
       押したときにも現在地が点く。そしてボトムシート版レイアウトでは
       升目が CSS で隠れるので、**この 4 つが唯一の操作子**になる。
     */
-    panel.note('ROTATION PLANES / 回転平面');
+    panel.note(L.rotationPlanes);
     for (const item of SPIN_PRESETS) {
       panel.button({
         key: item.key,
@@ -461,7 +456,7 @@ export class PolytopeExhibit implements Exhibit {
 
     panel.planeGrid({
       key: 'planes',
-      label: 'PLANES / 平面 (i, j)',
+      label: L.planes,
       maxAxes: N_MAX,
       axes: p.n,
       cells: this.planeCells(),
@@ -472,12 +467,7 @@ export class PolytopeExhibit implements Exhibit {
     });
 
     // note は textContent なので、強調の記号を書くとそのまま画面に出る
-    panel.note(
-      '塗られた升は回っている平面、点だけの升は止めた平面 ── 回転は止まるが、' +
-        '軸の混ざりは残る。そうしないと投影が捨てる軸へ回転が一度も触れなくなり、' +
-        'その次元は像から丸ごと消える(n を上げても絵が変わらなくなる)。' +
-        '破線の升は選ばれてはいるが、枚数の上限で順番待ちしている平面。',
-    );
+    panel.note(L.notePlanes);
 
     refresh();
   }

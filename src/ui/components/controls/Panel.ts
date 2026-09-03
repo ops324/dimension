@@ -39,6 +39,7 @@ import {
   SHEET_LAYOUT_QUERY,
   type Component,
 } from '../component';
+import { UI } from '../../../i18n';
 import { normalizeWheel } from '../../../core/scrollGlide';
 import { decideSwipe, decideWheel } from './sheetGesture';
 import { createSlider, type SliderControl, type SliderSpec } from './Slider';
@@ -190,7 +191,7 @@ class Panel implements PanelBuilder, Component {
       h('span', 'panel-tick', { 'aria-hidden': 'true' }),
       h('span', 'panel-kicker-text', { text: 'PARAMETERS', lang: 'en' }),
       h('span', 'panel-rule', { 'aria-hidden': 'true' }),
-      h('span', 'panel-hint', { text: '操作する', 'aria-hidden': 'true' }),
+      h('span', 'panel-hint', { text: UI.panel.hint, 'aria-hidden': 'true' }),
       h('span', 'panel-chevron', { 'aria-hidden': 'true' }),
     );
 
@@ -203,7 +204,7 @@ class Panel implements PanelBuilder, Component {
     */
     this.grab = h('button', 'panel-grab', {
       type: 'button',
-      'aria-label': '操作する(操作パネルの開閉)',
+      'aria-label': UI.panel.toggle,
       'data-cursor': '',
     });
     this.grabBar = h('span', 'panel-grab-bar');

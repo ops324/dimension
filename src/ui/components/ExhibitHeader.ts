@@ -25,7 +25,8 @@ export interface ExhibitHeaderInfo {
   readonly index: number;
   readonly total: number;
   readonly en: string;
-  readonly jp: string;
+  /** 英字名に添える副題。かつて `jp` という名だった(`i18n/types.ts` を参照) */
+  readonly sub: string;
   readonly tagline: string;
 }
 
@@ -34,7 +35,7 @@ const EXIT_MS = 220;
 /** 英字名: 文字ごとの遅れと尺 */
 const CHAR_STAGGER = 20;
 const CHAR_MS = 720;
-/** 日本語名・タグライン: 行ごとの遅れと、英字名からの遅れ */
+/** 副題・タグライン: 行ごとの遅れと、英字名からの遅れ */
 const LINE_STAGGER = 60;
 const LINE_DELAY = 120;
 const LINE_MS = 640;
@@ -47,7 +48,7 @@ export class ExhibitHeader implements Component {
 
   private readonly indexEl: HTMLElement;
   private readonly enEl: HTMLElement;
-  private readonly jpEl: HTMLElement;
+  private readonly subEl: HTMLElement;
   private readonly taglineEl: HTMLElement;
 
   private readonly running: Animation[] = [];
@@ -61,7 +62,7 @@ export class ExhibitHeader implements Component {
     this.el = root;
     this.indexEl = need(root, 'gallery-index');
     this.enEl = need(root, 'gallery-en');
-    this.jpEl = need(root, 'gallery-jp');
+    this.subEl = need(root, 'gallery-jp');
     this.taglineEl = need(root, 'gallery-tagline');
   }
 
@@ -85,7 +86,7 @@ export class ExhibitHeader implements Component {
     this.current = info;
     this.indexEl.textContent = `EXHIBIT ${pad(info.index)} / ${pad(info.total)}`;
     this.enEl.textContent = info.en;
-    this.jpEl.textContent = info.jp;
+    this.subEl.textContent = info.sub;
     this.taglineEl.textContent = info.tagline;
 
     // 番号はフェードだけ。動かすのは名前の方だという序列をつける
@@ -100,7 +101,7 @@ export class ExhibitHeader implements Component {
       reveal(this.enSplit, { stagger: CHAR_STAGGER, duration: CHAR_MS, easing: EASE.outExpo }),
     );
 
-    this.lineSplits = splitLinesBatch([this.jpEl, this.taglineEl]);
+    this.lineSplits = splitLinesBatch([this.subEl, this.taglineEl]);
     for (let i = 0; i < this.lineSplits.length; i++) {
       pushAll(
         this.running,
@@ -152,10 +153,10 @@ export class ExhibitHeader implements Component {
     cancelAll(this.running);
     this.restore();
     this.enEl.textContent = info.en;
-    this.jpEl.textContent = info.jp;
+    this.subEl.textContent = info.sub;
     this.taglineEl.textContent = info.tagline;
     this.enSplit = splitChars(this.enEl, { keepWords: true });
-    this.lineSplits = splitLinesBatch([this.jpEl, this.taglineEl]);
+    this.lineSplits = splitLinesBatch([this.subEl, this.taglineEl]);
   }
 
   destroy(): void {
@@ -177,7 +178,7 @@ export class ExhibitHeader implements Component {
   }
 
   private texts(): readonly HTMLElement[] {
-    return [this.indexEl, this.enEl, this.jpEl, this.taglineEl];
+    return [this.indexEl, this.enEl, this.subEl, this.taglineEl];
   }
 }
 

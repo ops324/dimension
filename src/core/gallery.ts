@@ -22,7 +22,7 @@ import {
   encodeState,
   type ExhibitOverrides,
 } from './exhibitState';
-import { EXHIBIT_INFO, type ExhibitInfo } from '../ui/content';
+import { EXHIBIT_INFO, UI, type ExhibitInfo } from '../ui/content';
 import { TransitionOverlay } from '../ui/components/TransitionOverlay';
 import { Tabs } from '../ui/components/Tabs';
 import { ExhibitHeader } from '../ui/components/ExhibitHeader';
@@ -304,7 +304,7 @@ export class Gallery {
       container: this.tabsEl,
       items: EXHIBIT_REGISTRY.map((entry) => {
         const info = infoFor(entry.id);
-        return { id: entry.id, en: info.en, jp: info.jp };
+        return { id: entry.id, en: info.en, sub: info.sub };
       }),
       active: this.activeId,
       panelId: 'gallery-panel',
@@ -516,7 +516,7 @@ export class Gallery {
       window.scrollTo(0, y);
       this.scrollDirector.remeasure();
       // 章インデックスは変わらないので、これが無いと物語への復帰が無音になる
-      this.announcer?.announce('物語へ戻りました');
+      this.announcer?.announce(UI.announce.backToNarrative);
 
       this.busy = false;
       this.fade(false);
@@ -956,18 +956,20 @@ export class Gallery {
     // ここで**引く**のが要 ── applyInfo は enter() の後に走るので、
     // 展示側からイベントで押しても、この行に上書きされてしまう
     const tagline = this.exhibits.get(id)?.tagline?.() ?? info.tagline;
-    this.header.apply({ index, total, en: info.en, jp: info.jp, tagline });
+    this.header.apply({ index, total, en: info.en, sub: info.sub, tagline });
     // やさしい層(codex)+ 深い層(explanation)の二層(Phase 15)
-    this.drawer.setContent(`${info.jp} / ${info.en}`, info.codex, info.explanation);
+    this.drawer.setContent(`${info.sub} / ${info.en}`, info.codex, info.explanation);
     this.hud?.setExhibit(index, total);
     this.tabs.setActive(id);
     /*
-      読み上げは **info.jp**(日本語名)で告げる ── 日本語の TTS が
+      **どのフィールドを読むかは辞書が決める**(`i18n/types.ts` の announce の注)。
+      日本語は `info.sub`(日本語名)で告げる ── 日本語の TTS が
       "HOPF FIBRATION" を綴り読みする問題を、ライブリージョンでは最初から避ける。
+      英語は逆に `info.en` が正しい名前になる。ここに言語の分岐は置かない。
       タグラインは足さない: 可視テキストであり、SplitText が aria-label と
       .sr-only の複製で原文を保っているので、読み手はすでに到達できる。
     */
-    this.announcer?.announce(`展示 ${index} / ${total} ${info.jp}`);
+    this.announcer?.announce(UI.announce.exhibit(index, total, info));
     // perspective の神視点インセットとパネルが重ならないよう、モードを CSS へ伝える
     this.rootEl.dataset.exhibit = id;
   }

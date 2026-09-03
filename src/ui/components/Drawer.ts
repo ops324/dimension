@@ -23,7 +23,8 @@
  * 数式の正しさは動きより上位。
  */
 
-import type { ExhibitCodex } from '../content';
+import { UI } from '../../i18n';
+import type { ExhibitCodex, LabelPair } from '../content';
 import { EASE, cancelAll, h, play, type Component } from './component';
 import { reveal, splitChars, type SplitHandle } from './SplitText';
 import { magnetize, type Magnet } from './MagneticButton';
@@ -264,15 +265,25 @@ export class Drawer implements Component {
 
 /* ------------------------------------------------------- コーデックスの部品
 
-   ラベルは「EN / 日本語」の複合。EN はモノスペースの飾りなので aria-hidden にし、
-   読み上げには日本語だけを通す(タブやナビと同じ規律)。
+   ラベルは「欧文 / 訳文」の複合。日本語では欧文はモノスペースの飾りなので
+   aria-hidden にし、読み上げには日本語だけを通す(タブやナビと同じ規律)。
+
+   **英語では訳文の側が空になる**(`i18n/en.ts` の UI の注を参照)。そのとき
+   欧文を aria-hidden のままにすると、**ラベルが支援技術から丸ごと消える** ──
+   節見出しの無いドロワーになる。隠してよいのは「訳文が名前を担っているとき」
+   だけなので、そこを条件にする。空の側は style.css の `:empty` が畳む。
 */
 
-function label(en: string, jp: string): HTMLElement {
+function label(pair: LabelPair): HTMLElement {
   const node = h('p', 'dw-label');
+  const spoken = pair.text !== '';
   node.append(
-    h('span', 'dw-label-en', { text: en, lang: 'en', 'aria-hidden': 'true' }),
-    h('span', 'dw-label-jp', { text: jp }),
+    h('span', 'dw-label-en', {
+      text: pair.latin,
+      lang: 'en',
+      'aria-hidden': spoken ? 'true' : undefined,
+    }),
+    h('span', 'dw-label-jp', { text: pair.text }),
   );
   return node;
 }
@@ -281,7 +292,7 @@ function label(en: string, jp: string): HTMLElement {
 function buildMetaphor(codex: ExhibitCodex): HTMLElement {
   const card = h('section', 'dw-card');
   card.append(
-    label('ANALOGY', 'たとえるなら'),
+    label(UI.drawer.analogy),
     h('p', 'dw-card-title', { text: codex.metaphorTitle }),
     h('p', 'dw-card-body', { text: codex.metaphor }),
   );
@@ -293,14 +304,14 @@ function buildObserve(codex: ExhibitCodex): HTMLElement {
   const section = h('section', 'dw-observe');
   const list = h('ul', 'dw-observe-list');
   for (const item of codex.observe) list.append(h('li', undefined, { text: item }));
-  section.append(label('OBSERVE', 'いま見えているもの'), list);
+  section.append(label(UI.drawer.observe), list);
   return section;
 }
 
 /** クエスト。番号 + 命令形タイトル + 「何が見られるか」の予告 */
 function buildQuests(codex: ExhibitCodex): HTMLElement {
   const section = h('section', 'dw-quests');
-  section.append(label('TRY THIS', 'やってみよう'));
+  section.append(label(UI.drawer.tryThis));
   for (let i = 0; i < codex.quests.length; i++) {
     const quest = codex.quests[i];
     const row = h('div', 'dw-quest');
@@ -331,7 +342,7 @@ function buildStats(codex: ExhibitCodex): HTMLElement {
     );
     grid.append(cell);
   }
-  section.append(label('DATA', '図鑑データ'), grid);
+  section.append(label(UI.drawer.data), grid);
   return section;
 }
 
@@ -343,9 +354,17 @@ function buildStats(codex: ExhibitCodex): HTMLElement {
 function buildDeep(deepHtml: string): HTMLElement {
   const details = h('details', 'dw-deep');
   const summary = h('summary', 'dw-deep-summary');
+  // `label()` と同じ理由で、欧文を隠すのは訳文が名前を担っているときだけ ──
+  // ここは <summary>(開閉のコントロール)なので、名前を失うと操作できる何かが
+  // 名無しで残る
+  const deep = UI.drawer.deepDive;
   summary.append(
-    h('span', 'dw-deep-en', { text: 'DEEP DIVE', lang: 'en', 'aria-hidden': 'true' }),
-    h('span', 'dw-deep-jp', { text: 'もっと深く潜る' }),
+    h('span', 'dw-deep-en', {
+      text: deep.latin,
+      lang: 'en',
+      'aria-hidden': deep.text !== '' ? 'true' : undefined,
+    }),
+    h('span', 'dw-deep-jp', { text: deep.text }),
     h('span', 'dw-deep-glyph', { text: '◇', 'aria-hidden': 'true' }),
   );
   const body = h('div', 'dw-deep-body');
