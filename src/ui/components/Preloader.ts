@@ -16,6 +16,7 @@
  * 「線が開いた」ように見える。
  */
 
+import { UI } from '../../i18n';
 import { DUR, EASE, h, motionTime, play, type Component } from './component';
 import { hide, splitChars, type SplitHandle } from './SplitText';
 
@@ -46,8 +47,8 @@ const EXIT_PART_AT = 560;
 const EXIT_PANEL_MS = 700;
 const EXIT_PANEL_OFFSET = 60;
 
+/** ワードマークは作品名なので言語に依らない */
 const WORDMARK = 'DIMENSION';
-const CAPTION = '次元を準備しています';
 
 export interface PreloaderOptions {
   /** 上下パネルが割れはじめる瞬間 = 背後の作品が現れはじめる合図 */
@@ -90,7 +91,7 @@ export class Preloader implements Component {
     this.el = h('div', 'pl', {
       role: 'status',
       'aria-live': 'polite',
-      'aria-label': 'DIMENSION を読み込んでいます',
+      'aria-label': UI.preloader.label,
     });
 
     this.panelTop = h('div', 'pl-panel pl-panel-top', { 'aria-hidden': 'true' });
@@ -101,7 +102,7 @@ export class Preloader implements Component {
     this.rail = h('div', 'pl-rail');
     this.fill = h('div', 'pl-fill');
     this.rail.append(this.fill);
-    this.caption = h('p', 'pl-caption', { text: CAPTION });
+    this.caption = h('p', 'pl-caption', { text: UI.preloader.caption });
     stack.append(this.mark, this.rail, this.caption);
 
     this.percent = h('p', 'pl-percent', { 'aria-hidden': 'true', text: '00' });

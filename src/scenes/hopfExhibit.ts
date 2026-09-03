@@ -10,6 +10,7 @@ import {
 } from '../math/hopf';
 import { Line4DBatch } from '../render/line4d';
 import { cosinePalette } from '../render/palette';
+import { UI } from '../i18n';
 import { createPanel } from '../ui/panel';
 import type { EngineCtx, Exhibit } from './exhibit';
 
@@ -153,10 +154,11 @@ export class HopfExhibit implements Exhibit {
    */
   buildPanel(root: HTMLElement): void {
     const p = this.params;
+    const L = UI.panels.hopf;
     const panel = createPanel(root, 'HOPF FIBRATION');
 
     panel.slider({
-      label: 'FIBERS / ファイバー数',
+      label: L.fibers,
       min: 24,
       max: MAX_FIBERS,
       step: 12,
@@ -165,11 +167,11 @@ export class HopfExhibit implements Exhibit {
     });
 
     panel.segmented({
-      label: 'DISTRIBUTION / 分布',
+      label: L.distribution,
       options: [
-        ['rings', '緯線'],
-        ['great', '大円'],
-        ['fibonacci', 'フィボナッチ'],
+        ['rings', L.distributions.latitude],
+        ['great', L.distributions.greatCircle],
+        ['fibonacci', L.distributions.fibonacci],
       ],
       value: p.distribution,
       onSelect: (v) => this.setDistribution(v as HopfDistribution, p.fiberCount),
@@ -178,7 +180,7 @@ export class HopfExhibit implements Exhibit {
     panel.divider();
 
     panel.toggle({
-      label: 'ISOCLINIC / 等傾回転',
+      label: L.isoclinic,
       value: p.isoclinic,
       onChange: (v) => {
         p.isoclinic = v;
@@ -187,7 +189,7 @@ export class HopfExhibit implements Exhibit {
     });
 
     panel.slider({
-      label: 'ω₁ / 平面 (0,1)',
+      label: L.omega1,
       min: 0,
       max: 0.6,
       step: 0.01,
@@ -200,7 +202,7 @@ export class HopfExhibit implements Exhibit {
 
     panel.slider({
       key: 'omega2',
-      label: 'ω₂ / 平面 (2,3)',
+      label: L.omega2,
       min: 0,
       max: 0.6,
       step: 0.01,
@@ -213,7 +215,7 @@ export class HopfExhibit implements Exhibit {
     });
 
     panel.slider({
-      label: 'PRECESSION / 歳差',
+      label: L.precession,
       min: 0,
       max: 0.2,
       step: 0.005,
@@ -224,10 +226,7 @@ export class HopfExhibit implements Exhibit {
       },
     });
 
-    panel.note(
-      '画面を横切る巨大な線になりかけた輪だけ、そっと消している。' +
-        '極のそばの「途切れ」はその跡 ── 地図の端では、いつも何かがはみ出す。',
-    );
+    panel.note(L.note);
   }
 
   /** 分布・本数の変更。ジオメトリを作り直して一括アップロードする */

@@ -1,5 +1,6 @@
 import { Vector2 } from 'three';
 
+import { UI } from '../i18n';
 import type { Engine } from './engine';
 import type { Starfield } from '../render/starfield';
 import { BLOOM_BASE_RADIUS, BLOOM_BASE_STRENGTH } from '../render/postfx';
@@ -413,7 +414,7 @@ export class QualityController {
     chip.id = 'quality-chip';
     chip.setAttribute('aria-expanded', 'false');
     chip.setAttribute('aria-controls', 'quality-menu');
-    chip.setAttribute('aria-label', '描画品質');
+    chip.setAttribute('aria-label', UI.chrome.qualityLabel);
     chip.addEventListener('click', () => this.setOpen(root.dataset.open !== 'true'));
 
     root.replaceChildren(readout, opts, chip);

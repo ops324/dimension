@@ -26,7 +26,8 @@ export interface TabItem {
   /** 英字名(Unbounded) */
   readonly en: string;
   /** 日本語名 */
-  readonly jp: string;
+  /** 英字名に添える副題(`i18n/types.ts` の ExhibitInfo.sub) */
+  readonly sub: string;
 }
 
 export interface TabsOptions {
@@ -89,7 +90,7 @@ export class Tabs implements Component {
       tab.append(
         index,
         h('span', 'gal-tab-en', { text: item.en, lang: 'en' }),
-        h('span', 'gal-tab-jp', { text: item.jp }),
+        h('span', 'gal-tab-jp', { text: item.sub }),
       );
       tab.addEventListener('click', this.onClick);
 

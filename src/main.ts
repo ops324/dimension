@@ -31,8 +31,10 @@ import { createCursor } from './ui/components/Cursor';
 import { createLensDriver } from './ui/lens';
 import { magnetize } from './ui/components/MagneticButton';
 import { createSoundToggle } from './ui/components/SoundToggle';
+import { createLangToggle } from './ui/components/LangToggle';
 import { createAnnouncer } from './ui/components/Announcer';
 import { createRotationReadout } from './ui/components/RotationReadout';
+import { applyStaticCopy } from './i18n/dom';
 import { audio } from './audio/engine';
 import { initAudioWiring, type AudioWiring } from './audio/wiring';
 
@@ -42,6 +44,14 @@ if (!(canvasEl instanceof HTMLCanvasElement)) {
 }
 // 明示的に型を確定させる: instanceof の絞り込みは下のクロージャまで届かない
 const canvas: HTMLCanvasElement = canvasEl;
+
+/**
+ * 言語の適用(Phase 45)。**プリローダより先**に、同期で走らせる ──
+ * `<html lang>` と `<title>` が合っていないあいだに支援技術が読み始めると、
+ * 言語を間違えた声で始まる。文言の選択そのものは `i18n/lang.ts` が
+ * モジュール読み込み時に済ませているので、ここは DOM へ書くだけ。
+ */
+applyStaticCopy();
 
 /**
  * 単独展示のブートパス(開発・回帰検証用)。?exhibit=<展示 id> で物語もギャラリー
@@ -142,6 +152,16 @@ function mountChrome(): void {
 
   // 音のチップ。品質チップの真下に座り、初回訪問だけ 2 回小さく脈打つ
   createSoundToggle(document.body);
+
+  /*
+    言語スイッチ(Phase 45)。柱のいちばん下 = いちばん親指に近い場所に置き、
+    音と品質のチップを 1 段ずつ押し上げる(位置の算術は style.css の
+    --hud-stack だけで書く、という既存の規律のとおり)。
+
+    プリローダが幕を割る瞬間に立つ。読み始める前に切り替えたい人が
+    いちばん多いので、**入場の直後に見えていること**が要件である。
+  */
+  createLangToggle(document.body);
 }
 
 function bootStandaloneExhibit(kind: ExhibitId): void {

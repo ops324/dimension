@@ -30,6 +30,7 @@ import {
 import { LineBatch } from '../render/lineBatch';
 import { PointBatch } from '../render/pointBatch';
 import { CYAN, GOLD, MAGENTA, VIOLET } from '../render/palette';
+import { UI } from '../i18n';
 import { perspectiveCaption, perspectiveTagline } from '../ui/content';
 import { createPanel } from '../ui/panel';
 import { SHEET_LAYOUT_QUERY } from '../ui/components/component';
@@ -304,9 +305,9 @@ interface PerspectivePreset {
 }
 
 const PRESETS: readonly PerspectivePreset[] = [
-  { key: 'preset-flatland', label: '2 次元人が立方体を見る', observer: 2, target: 3, mode: 'slice', family: 'cube' },
-  { key: 'preset-tesseract', label: '私たちがテッセラクトを見る', observer: 3, target: 4, mode: 'slice', family: 'cube' },
-  { key: 'preset-fromabove', label: '4 次元の目で見る', observer: 4, target: 3, mode: 'xray', family: 'cube' },
+  { key: 'preset-flatland', label: UI.panels.perspective.presets.flatland, observer: 2, target: 3, mode: 'slice', family: 'cube' },
+  { key: 'preset-tesseract', label: UI.panels.perspective.presets.tesseract, observer: 3, target: 4, mode: 'slice', family: 'cube' },
+  { key: 'preset-fromabove', label: UI.panels.perspective.presets.fromAbove, observer: 4, target: 3, mode: 'xray', family: 'cube' },
 ];
 
 /** 画面幅からインセットの CSS 幅を決める(DOM 枠と scissor 矩形の唯一の情報源) */
@@ -513,6 +514,7 @@ export class PerspectiveExhibit implements Exhibit {
    */
   buildPanel(root: HTMLElement): void {
     const p = this.params;
+    const L = UI.panels.perspective;
     const panel = createPanel(root, 'PERSPECTIVE');
 
     const sync = (): void => {
@@ -567,7 +569,7 @@ export class PerspectiveExhibit implements Exhibit {
       sync();
     };
 
-    panel.note('PRESETS / 代表的な視点');
+    panel.note(L.presetsNote);
     for (const item of PRESETS) {
       panel.button({ key: item.key, label: item.label, onClick: () => preset(item) });
     }
@@ -578,7 +580,7 @@ export class PerspectiveExhibit implements Exhibit {
     // flex: 1 1 0 で 1 行に潰れる ── 高さの契約は折り返した瞬間に無効になる(罠 #15)
     panel.segmented({
       key: 'observer',
-      label: 'OBSERVER / 観測者 m',
+      label: L.observer,
       options: [
         ['2', '2'],
         ['3', '3'],
@@ -594,7 +596,7 @@ export class PerspectiveExhibit implements Exhibit {
 
     panel.segmented({
       key: 'target',
-      label: 'TARGET / 対象 n',
+      label: L.target,
       options: [
         ['2', '2'],
         ['3', '3'],
@@ -611,11 +613,11 @@ export class PerspectiveExhibit implements Exhibit {
 
     panel.segmented({
       key: 'mode',
-      label: 'MODE / 見えかた',
+      label: L.mode,
       options: [
-        ['slice', '断面'],
-        ['shadow', '影'],
-        ['xray', 'X線俯瞰'],
+        ['slice', L.modes.slice],
+        ['shadow', L.modes.shadow],
+        ['xray', L.modes.xray],
       ],
       value: p.mode,
       onSelect: (v) => {
@@ -625,17 +627,12 @@ export class PerspectiveExhibit implements Exhibit {
     });
 
     panel.toggle({
-      label: 'ROTATE / 回転',
+      label: L.rotate,
       value: p.rotate,
       onChange: (v) => this.setRotate(v),
     });
 
-    panel.note(
-      '観測者と対象は同じ次元にできない(m ≠ n)。' +
-        '低い側から覗くなら断面と影、高い側から見下ろすなら X線俯瞰 ── ' +
-        '見下ろせるのは三次元までの世界だけで、それ以外の組み合わせは灰色になる。' +
-        'いま見ている設定が上の代表的な視点と重なると、その行に印が点く。',
-    );
+    panel.note(L.note);
 
     sync();
   }
@@ -1474,7 +1471,7 @@ export class PerspectiveExhibit implements Exhibit {
 
     const label = document.createElement('span');
     label.className = 'pv-inset-label';
-    label.textContent = '神の視点 / GOD VIEW';
+    label.textContent = UI.panels.perspective.godView;
 
     const readout = document.createElement('span');
     readout.className = 'pv-inset-readout';

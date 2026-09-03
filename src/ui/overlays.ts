@@ -1,5 +1,5 @@
 import type { ScrollDirector } from '../core/scrollDirector';
-import type { Chapter } from './content';
+import { MARQUEE, type Chapter } from './content';
 import { chapterMove, thresholdsFor } from './chapterThresholds';
 import type { Announcer } from './components/Announcer';
 import { DUR, EASE, cancelAll, play } from './components/component';
@@ -62,9 +62,10 @@ const enum ChapterState {
   Hiding = 3,
 }
 
-/** 流れる帯(プロローグ / エピローグ)。一行を延々と繰り返すだけの装飾 */
-const MARQUEE_PROLOGUE = 'THE FOURTH DIMENSION IS A DIRECTION — NOT A PLACE — ';
-const MARQUEE_EPILOGUE = 'EVERY DIMENSION CONTAINS THE LAST — ';
+/**
+ * 流れる帯(プロローグ / エピローグ)。一行を延々と繰り返すだけの装飾。
+ * 文言は辞書から引く ── どの言語でも欧文の飾りだが、言語ごとに変えてよい。
+ */
 /** 帯 1 本ぶんの繰り返し回数。半分がビューポート幅を超えていれば継ぎ目は見えない */
 const MARQUEE_REPEAT = 8;
 
@@ -187,8 +188,8 @@ export function buildNarrativeDOM(root: HTMLElement, chapters: readonly Chapter[
     // 文字数に応じてディスプレイサイズを決める(長い語ほど小さく = 常に画面幅に収まる)
     en.style.setProperty('--len', String(chapter.en.length));
 
-    const title = makeEl(isPrologue ? 'h2' : 'h3', 'ch-title', chapter.jp.title);
-    const body = makeEl('p', 'ch-body', chapter.jp.body);
+    const title = makeEl(isPrologue ? 'h2' : 'h3', 'ch-title', chapter.text.title);
+    const body = makeEl('p', 'ch-body', chapter.text.body);
 
     inner.append(en, title, body);
 
@@ -236,9 +237,9 @@ export function buildNarrativeDOM(root: HTMLElement, chapters: readonly Chapter[
     */
     const marqueeText =
       chapter.role === 'prologue'
-        ? MARQUEE_PROLOGUE
+        ? MARQUEE.prologue
         : chapter.role === 'epilogue'
-          ? MARQUEE_EPILOGUE
+          ? MARQUEE.epilogue
           : null;
     if (marqueeText !== null) {
       const marquee = makeMarquee(marqueeText);
@@ -329,7 +330,7 @@ export class Overlays {
     // 本文は読まない ── .ch-body は読み取りカーソルが既に到達できる実テキストで、
     // ライブリージョンへ流すと物語を丸ごと二重に喋ることになる
     this.announcements = chapters.map((c) =>
-      `${c.caption} ${c.unit ?? ''} ${c.jp.title}`.replace(/\s+/g, ' ').trim(),
+      `${c.caption} ${c.unit ?? ''} ${c.text.title}`.replace(/\s+/g, ' ').trim(),
     );
 
     const n = chapters.length;

@@ -7,6 +7,10 @@
 
 **🌐 公開URL: https://dimension-vert.vercel.app**(ミラー: https://ops324.github.io/dimension/)
 
+**日本語 / English** — ブラウザの言語設定で最初の言語が決まり、右下のチップでいつでも切り替えられる。
+選んだ言語は URL に乗るので、共有リンクは送った相手にも同じ言語で届く(`?lang=en` / `?lang=ja`)。
+The language follows your browser on the first visit; the chip at the bottom right switches it, and the choice travels with the link.
+
 ## 体験 / Experience
 
 - **物語「次元の階段」** — スクロールとともに、0次元の点が線・面・立方体・テッセラクト、そして6次元超立方体へと連続的に押し出されていく
@@ -49,6 +53,7 @@
 | **トップナビ 物語 / ギャラリー** | モードの往復。`Esc` でもギャラリーを抜けられる |
 | **ブラウザの戻る / 進む** | 物語 ⇄ ギャラリーを往復する。iOSの端スワイプでも同じ(サイトからは出ない) |
 | **右下「◈ AUTO」** | 描画品質セレクタ。AUTO・ULTRA・HIGH・BALANCED(下記) |
+| **右下「⇄ 日本語 / English」** | 言語の切り替え。ラベルは**行き先の言語名**なので、押せばそこへ行く。選択は記憶され、URL にも乗る(下記) |
 
 ### 共有リンク
 
@@ -63,6 +68,15 @@
 ```
 https://dimension-vert.vercel.app/?gallery=clifford
 https://dimension-vert.vercel.app/?gallery=hopf&p=fib-1200_dist-fibonacci_w1-0.4
+```
+
+**言語も載る。** `?lang=ja` / `?lang=en` は他のキーと独立で、展示とパラメータを保ったまま
+言語だけを差し替える。**既定言語でも必ず書く**のがここだけの作法で、書かないと受け取った人の
+ブラウザ設定で別の言語になってしまう ── 共有リンクの言語が送り手の意図どおり届くことが要件である。
+
+```
+https://dimension-vert.vercel.app/?lang=en
+https://dimension-vert.vercel.app/?lang=en&gallery=perspective&p=m-4_n-3_mode-xray
 ```
 
 ### 描画品質
@@ -91,6 +105,12 @@ https://dimension-vert.vercel.app/?gallery=hopf&p=fib-1200_dist-fibonacci_w1-0.4
 解説を開けばフォーカスはその中を巡回し、Esc で元のボタンへ戻る。
 `prefers-reduced-motion` では動きが止まり、グレインも静止する。
 
+`<html lang>` は表示中の言語に合わせて実行時に書き換わる ── 合っていない `lang` は
+支援技術の読み上げ言語を間違わせるので、装飾ではなく機能である。言語スイッチのラベルは
+行き先の言語名だけだが、読み上げ名には動詞が入る(`Switch to 日本語`)。
+「欧文 + 訳文」の二段組みラベルは、英語では訳文の側が空になるので**欧文が名前を担う** ──
+`aria-hidden` はそこを条件にしてあり、節見出しや開閉コントロールが名無しにならない。
+
 ## 技術 / Tech
 
 - Vite + TypeScript + Three.js(完全静的サイト、外部CDN依存なし)
@@ -103,6 +123,7 @@ https://dimension-vert.vercel.app/?gallery=hopf&p=fib-1200_dist-fibonacci_w1-0.4
 - ULTRA品質のエスカレーション起動 + フレーム時間ベースのAUTO降格
 - 音響は WebAudio による完全プロシージャル合成
 - 状態は URL に載り、履歴が退場路になる(`?gallery=<id>&p=<名前付きペア>`)
+- **二言語(ja / en)は `src/i18n/` の辞書 2 本**。型が訳の抜けをコンパイル時に落とし、引き方は辞書を引数に取る純関数 1 本だけなので、**同じ試験が両言語を突く**。言語は `?lang=` → localStorage → ブラウザ設定 → 既定 の 4 段で決まる
 - `env(safe-area-inset-*)` / ライブリージョン / 焦点の閉じ込め
 
 **設計の詳細・定数の根拠・既知の罠は [SPEC.md](SPEC.md) を参照。**

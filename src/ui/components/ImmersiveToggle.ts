@@ -13,6 +13,7 @@
  * 3 つで 1 本の計器の語彙になる。
  */
 
+import { UI } from '../../i18n';
 import { h, type Component } from './component';
 import { magnetize, type Magnet } from './MagneticButton';
 
@@ -37,7 +38,7 @@ export class ImmersiveToggle implements Component {
       id: 'immersive-chip',
       type: 'button',
       'data-cursor': '',
-      'aria-label': 'UI を隠して作品だけを見る',
+      'aria-label': UI.immersive.label,
       'aria-pressed': 'false',
     });
 

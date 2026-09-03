@@ -4,6 +4,7 @@ import { expSmooth } from '../math/ease';
 import type { PlaneRotation } from '../math/rotation';
 import { Line4DBatch } from '../render/line4d';
 import { cosinePalette } from '../render/palette';
+import { UI } from '../i18n';
 import { createPanel } from '../ui/panel';
 import type { EngineCtx, Exhibit } from './exhibit';
 
@@ -187,10 +188,11 @@ export class CliffordExhibit implements Exhibit {
    */
   buildPanel(root: HTMLElement): void {
     const p = this.params;
+    const L = UI.panels.clifford;
     const panel = createPanel(root, 'CLIFFORD TORUS');
 
     panel.slider({
-      label: 'GRID U / u 円の本数',
+      label: L.gridU,
       min: 12,
       max: MAX_GRID,
       step: 4,
@@ -199,7 +201,7 @@ export class CliffordExhibit implements Exhibit {
     });
 
     panel.slider({
-      label: 'GRID V / v 円の本数',
+      label: L.gridV,
       min: 12,
       max: MAX_GRID,
       step: 4,
@@ -210,7 +212,7 @@ export class CliffordExhibit implements Exhibit {
     panel.divider();
 
     panel.toggle({
-      label: 'ISOCLINIC / 等傾回転',
+      label: L.isoclinic,
       value: p.isoclinic,
       onChange: (v) => {
         p.isoclinic = v;
@@ -219,7 +221,7 @@ export class CliffordExhibit implements Exhibit {
     });
 
     panel.slider({
-      label: 'ω₁ / 平面 (0,1)',
+      label: L.omega1,
       min: 0,
       max: 0.6,
       step: 0.01,
@@ -232,7 +234,7 @@ export class CliffordExhibit implements Exhibit {
 
     panel.slider({
       key: 'omega2',
-      label: 'ω₂ / 平面 (2,3)',
+      label: L.omega2,
       min: 0,
       max: 0.6,
       step: 0.01,
@@ -245,7 +247,7 @@ export class CliffordExhibit implements Exhibit {
     });
 
     panel.slider({
-      label: 'PRECESSION / 歳差 (0,3)',
+      label: L.precession,
       min: 0,
       max: 0.15,
       step: 0.005,
@@ -256,10 +258,7 @@ export class CliffordExhibit implements Exhibit {
       },
     });
 
-    panel.note(
-      '歳差を上げて待つと、トーラスは画面いっぱいに膨らみ ── ' +
-        '通り抜けた瞬間、内と外が入れ替わって裏返る。故障ではなく、これが見どころ。',
-    );
+    panel.note(L.note);
   }
 
   /** 格子密度の変更。ジオメトリを作り直して一括アップロードする */
